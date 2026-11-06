@@ -1,14 +1,27 @@
-/* UI for Cờ Tướng Úp – depends on Jieqi (engine.js), ChessClock (clock.js), JieqiBots (bots/*.js). */
-(function () {
+/* UI for Cờ Tướng Úp – depends on Jieqi (engine.js), ChessClock (clock.js), JieqiBots (bots/registry.js + manifest). */
+(async function () {
   'use strict';
   const J = window.Jieqi;
   const ChessClock = window.ChessClock;
-  const BOTS = window.JieqiBots || {};
-  const BOT_SIDE = 'b'; // human plays red vs bot
+  const Bots = window.JieqiBots;
+  const MIN_BOT_DELAY_MS = 350; // để mắt người kịp theo dõi nước của bot
+
+  // Nạp các bot trong manifest (script thường nên chạy được cả khi mở file:// trực tiếp)
+  const loadScript = (src) => new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = resolve;
+    el.onerror = () => reject(new Error(`Không nạp được ${src}`));
+    document.head.appendChild(el);
+  });
+  for (const f of window.JieqiBotManifest || []) {
+    try { await loadScript(`bots/${f}`); } catch (err) { console.error(err); }
+  }
   const SIDE_VI = { r: 'Đỏ', b: 'Đen' };
   const REASON_VI = {
     checkmate: 'chiếu bí', stalemate: 'hết nước đi', timeout: 'hết giờ',
     resign: 'đối thủ chịu thua', agreement: 'hai bên đồng ý hoà',
+    'illegal-move': 'đối thủ đi nước không hợp lệ', 'bot-error': 'bot đối thủ bị lỗi',
     'quiet-limit': 'quá 120 nước không ăn/lật quân',
   };
   const LOW_TIME_MS = 10000;
@@ -24,6 +37,7 @@
   let pendingConfirm = null;
   let selected = -1;
   let botThinking = false;
+  let botInfos = [];        // botInfos[i] = info bot trả về cho nước tạo ra history[i]
   const current = () => history[history.length - 1];
   const displayState = () => revealedState || current();
   const gameResult = () => current().result || endResult;
@@ -146,7 +160,7 @@
     } else {
       st.className = `status ${s.turn}`;
       st.textContent = `Lượt ${SIDE_VI[s.turn]}${inCheck ? ' – đang bị chiếu!' : ''}`
-        + `${botThinking ? ' (bot đang nghĩ…)' : ''}${clock.paused ? ' – đang tạm dừng' : ''}`;
+        + `${botThinking ? ` (${playerName(s.turn)} đang nghĩ…)` : ''}${clock.paused ? ' – đang tạm dừng' : ''}`;
     }
 
     const capHtml = (list) => list.map((c) =>
@@ -161,20 +175,29 @@
 
     const log = $('log');
     log.innerHTML = '';
-    history.slice(1).forEach((h) => {
+    history.slice(1).forEach((h, k) => {
       const m = h.lastMove;
+      const info = botInfos[k + 1];
       const li = document.createElement('li');
       li.className = m.side;
       const who = m.wasHidden ? `[úp ${J.NAMES_VI[m.role]}]→${J.NAMES_VI[m.revealed]}` : J.NAMES_VI[m.type];
       const cap = m.captured ? ` ăn ${J.NAMES_VI[m.captured.type]}${m.captured.wasHidden ? ' (úp)' : ''}` : '';
       li.textContent = `${SIDE_VI[m.side]}: ${who} ${J.squareName(m.from)}→${J.squareName(m.to)}${cap}`;
+      if (info) {
+        const span = document.createElement('span');
+        span.className = 'info';
+        span.textContent = [info.depth != null && `d${info.depth}`, info.score != null && `${info.score > 0 ? '+' : ''}${info.score}`,
+          info.timeMs != null && `${info.timeMs}ms`].filter(Boolean).join(' · ');
+        li.appendChild(span);
+      }
       log.appendChild(li);
     });
     log.scrollTop = log.scrollHeight;
     $('seed').textContent = history[0].seed;
-    $('undo').disabled = (history.length <= 1 && !endResult) || botThinking;
-    $('offerDraw').disabled = !!result || !!pendingConfirm || botThinking;
-    $('resign').disabled = !!result || !!pendingConfirm;
+    const noHuman = !actingSide();
+    $('undo').disabled = (history.length <= 1 && !endResult) || botThinking || noHuman;
+    $('offerDraw').disabled = !!result || !!pendingConfirm || botThinking || noHuman;
+    $('resign').disabled = !!result || !!pendingConfirm || noHuman;
     const anyHidden = current().board.some((p) => p && p.hidden);
     $('revealAll').hidden = !result || !anyHidden || !!revealedState;
     $('confirmBar').hidden = !pendingConfirm;
@@ -193,7 +216,8 @@
   function toast(text) {
     toastText = text;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastText = ''; render(); }, 3000);
+    toastTimer = setTimeout(() => { toastText = ''; render(); }, 4000);
+    render();
   }
 
   function endGame(result) {
@@ -205,8 +229,12 @@
     render();
   }
 
-  // Bên đang thao tác: vs bot luôn là người (Đỏ); 2 người thì là bên đang tới lượt.
-  const actingSide = () => (botKey() ? J.opp(BOT_SIDE) : current().turn);
+  // Bên đang thao tác: 2 người -> bên tới lượt; 1 người -> người đó; bot vs bot -> null.
+  function actingSide() {
+    const humans = ['r', 'b'].filter((side) => !isBot(side));
+    if (humans.length === 2) return current().turn;
+    return humans[0] || null;
+  }
 
   function askConfirm(text, yes, no, onYes) {
     pendingConfirm = { text, yes, no, onYes };
@@ -224,16 +252,17 @@
   async function offerDraw() {
     if (gameResult()) return;
     const side = actingSide();
-    const key = botKey();
-    if (!key) {
-      askConfirm(`${SIDE_VI[side]} cầu hoà. ${SIDE_VI[J.opp(side)]} có đồng ý không?`, 'Đồng ý hoà', 'Từ chối',
+    if (!side) return;
+    const other = J.opp(side);
+    if (!isBot(other)) {
+      askConfirm(`${SIDE_VI[side]} cầu hoà. ${SIDE_VI[other]} có đồng ý không?`, 'Đồng ý hoà', 'Từ chối',
         () => endGame({ winner: null, reason: 'agreement' }));
       return;
     }
-    const bot = BOTS[key];
+    const bot = player(other);
     let accept = false;
     try {
-      accept = bot.acceptDraw ? await bot.acceptDraw(J.cloneState(current()), J) : false;
+      accept = await bot.acceptDraw(J.cloneState(current()), J, botContext(other));
     } catch (err) { console.error('Bot error:', err); }
     if (accept) endGame({ winner: null, reason: 'agreement' });
     else { toast(`${bot.name} từ chối hoà.`); render(); }
@@ -245,10 +274,32 @@
     render();
   }
 
+  // ---------- Người chơi / bot ----------
+  const playerSpec = (side) => $(side === 'r' ? 'playerR' : 'playerB').value;
+  const isBot = (side) => playerSpec(side) !== 'human';
+  const playerCache = new Map();
+  function player(side) {
+    const spec = playerSpec(side);
+    if (!playerCache.has(spec)) playerCache.set(spec, Bots.resolve(spec));
+    return playerCache.get(spec);
+  }
+  const playerName = (side) => (isBot(side) ? player(side).name : 'Người');
+
+  function botContext(side) {
+    const clk = clock.enabled
+      ? { myTimeMs: clock.remaining[side], oppTimeMs: clock.remaining[J.opp(side)], incrementMs: clock.incrementMs }
+      : null;
+    const budget = Bots.suggestBudget(clk, 1000);
+    const t = performance.now();
+    return {
+      side, ply: current().ply, random: Math.random, now: () => performance.now(),
+      timeBudgetMs: budget, deadline: t + budget, clock: clk,
+      history: history.slice(1).map((h) => ({ from: h.lastMove.from, to: h.lastMove.to })),
+    };
+  }
+
   // ---------- Interaction ----------
-  const botKey = () => ($('mode').value === 'pvp' ? null : $('mode').value);
-  const humanCanMove = () => !botThinking && !clock.paused && !pendingConfirm
-    && !(botKey() && current().turn === BOT_SIDE);
+  const humanCanMove = () => !botThinking && !clock.paused && !pendingConfirm && !isBot(current().turn);
 
   function onSquare(i) {
     const s = current();
@@ -262,12 +313,13 @@
     render();
   }
 
-  function doMove(m) {
+  function doMove(m, info = null) {
     if (gameResult()) return;
     const mover = current().turn;
     const next = J.makeMove(current(), m);
     clock.press(mover);            // cộng giờ cho bên vừa đi, chạy giờ bên kia
     history.push(next);
+    botInfos[history.length - 1] = info;
     clockSnaps.push(clock.snapshot());
     if (next.result) clock.stop();
     selected = -1;
@@ -276,27 +328,40 @@
   }
 
   async function maybeBotMove() {
-    const key = botKey();
     const s = current();
-    if (!key || gameResult() || s.turn !== BOT_SIDE || botThinking) return;
+    const side = s.turn;
+    if (!isBot(side) || gameResult() || botThinking || pendingConfirm) return;
+    while (clock.paused) await sleep(200);
+    if (current() !== s || !isBot(side)) return;
     botThinking = true;
     render();
-    await sleep(350);
+    const bot = player(side);
+    const t0 = performance.now();
     try {
-      const move = await BOTS[key].chooseMove(J.cloneState(s), J);
+      const { move, info } = await bot.chooseMove(J.cloneState(s), J, botContext(side));
+      const elapsed = performance.now() - t0;
+      await sleep(Math.max(0, MIN_BOT_DELAY_MS - elapsed));
       while (clock.paused) await sleep(200);
       botThinking = false;
-      if (current() === s && move && !gameResult()) doMove(move); else render();
+      if (current() !== s || gameResult() || !isBot(side)) { render(); return; }
+      if (!move || !J.getLegalMovesFrom(s, move.from).some((x) => x.to === move.to)) {
+        endGame({ winner: J.opp(side), reason: 'illegal-move' });
+        toast(`${bot.name} đi nước không hợp lệ: ${JSON.stringify(move)}`);
+        return;
+      }
+      doMove(move, { ...info, timeMs: Math.round(elapsed) });
     } catch (err) {
       botThinking = false;
       console.error('Bot error:', err);
-      render();
+      endGame({ winner: J.opp(side), reason: 'bot-error' });
+      toast(`${bot.name} bị lỗi: ${err.message}`);
     }
   }
 
   function newGame() {
     createClock();
     history = [J.createGame()];
+    botInfos = [null];
     clockSnaps = [clock.snapshot()];
     endResult = null;
     revealedState = null;
@@ -304,6 +369,7 @@
     selected = -1;
     botThinking = false;
     render();
+    maybeBotMove();
   }
 
   function undo() {
@@ -317,10 +383,12 @@
       maybeBotMove();
       return;
     }
-    if (history.length <= 1) return;
+    if (!actingSide()) return;
+    if (history.length <= 1 || !actingSide()) return;
     history.pop(); clockSnaps.pop();
-    // vs bot: also take back the bot's move so it's the human's turn again
-    if (botKey() && current().turn === BOT_SIDE && history.length > 1) { history.pop(); clockSnaps.pop(); }
+    // lùi tiếp các nước của bot để tới lượt người
+    while (isBot(current().turn) && history.length > 1) { history.pop(); clockSnaps.pop(); }
+    botInfos.length = history.length;
     endResult = null;
     revealedState = null;
     pendingConfirm = null;
@@ -349,11 +417,22 @@
   }
 
   // ---------- Init ----------
-  for (const [key, bot] of Object.entries(BOTS)) {
-    const o = document.createElement('option');
-    o.value = key;
-    o.textContent = `Người (Đỏ) vs ${bot.name}`;
-    $('mode').appendChild(o);
+  for (const id of ['playerR', 'playerB']) {
+    for (const bot of Bots.list()) {
+      const o = document.createElement('option');
+      o.value = bot.id;
+      o.textContent = bot.name;
+      o.title = bot.description || '';
+      $(id).appendChild(o);
+    }
+  }
+  function onPlayersChange() {
+    const descs = ['r', 'b'].filter(isBot).map((side) => `${SIDE_VI[side]}: ${player(side).def.description}`);
+    $('botDesc').hidden = !descs.length;
+    $('botDesc').textContent = descs.join(' — ');
+    selected = -1;
+    render();
+    maybeBotMove();
   }
   $('newGame').addEventListener('click', newGame);
   $('undo').addEventListener('click', undo);
@@ -362,12 +441,13 @@
   $('offerDraw').addEventListener('click', offerDraw);
   $('revealAll').addEventListener('click', revealAll);
   $('confirmYes').addEventListener('click', () => { const c = pendingConfirm; pendingConfirm = null; if (c) c.onYes(); render(); });
-  $('confirmNo').addEventListener('click', () => { pendingConfirm = null; render(); });
+  $('confirmNo').addEventListener('click', () => { pendingConfirm = null; render(); maybeBotMove(); });
   $('hint').addEventListener('change', render);
   $('timeControl').addEventListener('change', onTimeControlChange);
   $('customMin').addEventListener('change', onTimeControlChange);
   $('customInc').addEventListener('change', onTimeControlChange);
-  $('mode').addEventListener('change', () => { selected = -1; render(); maybeBotMove(); });
+  $('playerR').addEventListener('change', onPlayersChange);
+  $('playerB').addEventListener('change', onPlayersChange);
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') undo();
     if (e.key === ' ' && e.target === document.body) { e.preventDefault(); togglePause(); }

@@ -46,9 +46,15 @@ npm test
 |---|---|
 | `engine.js` | Luật chơi, không đụng DOM. Dùng được cả trong browser (`window.Jieqi`) lẫn Node (`require('./engine')`) |
 | `clock.js` | Đồng hồ 2 bên (có cộng giây mỗi nước, tạm dừng, lưu/khôi phục khi đi lại) |
-| `ui.js` | Vẽ bàn cờ, xử lý click, đi lại (undo), biên bản |
-| `bots/basic-bots.js` | 2 bot mẫu: ngẫu nhiên, tham ăn 1 nước |
-| `test/engine.test.js` | Test luật |
+| `ui.js` | Vẽ bàn cờ, xử lý click, đi lại (undo), biên bản; chọn Người/bot cho từng bên |
+| `bots/registry.js` | Nơi đăng ký bot + giao diện chung (`JieqiBots`) |
+| `bots/manifest.js` | Danh sách file bot – **thêm bot mới chỉ cần sửa file này** |
+| `bots/lib/common.js` | Helper dùng chung: giá trị quân, tính chênh lệch quân… |
+| `bots/random.js`, `bots/greedy.js` | 2 bot mẫu |
+| `bots/index.js` | Nạp toàn bộ bot trong Node |
+| `arena/match.js` | Chơi 1 ván bot vs bot, replay ván từ record |
+| `arena/arena.js` | Đấu trường: chạy song song nhiều ván, thống kê Elo |
+| `test/` | Test luật, bot, đấu trường (`npm test`) |
 
 ## API engine (để viết bot)
 
@@ -66,25 +72,68 @@ Jieqi.isInCheck(s), s.result, s.turn, s.board, s.pools
 
 Mỗi quân: `{ side: 'r'|'b', type, hidden, role }`. `role` = loại quân của ô xuất phát (cách quân úp di chuyển); `type` = quân thật, `null` khi còn úp.
 
-## Thêm bot
+## Viết bot
 
-Tạo file trong `bots/`, đăng ký vào `window.JieqiBots`, rồi thêm `<script>` vào `index.html`. Bot sẽ tự hiện trong menu "Chế độ".
+1. Tạo file `bots/<ten-bot>.js`:
 
 ```js
-window.JieqiBots.myBot = {
-  name: 'Bot của tôi',
-  chooseMove(state, J) {       // có thể trả về Promise (ví dụ gọi Web Worker hoặc server)
-    return J.getLegalMoves(state)[0];
-  },
-  acceptDraw(state, J) { return false; },   // tuỳ chọn: trả lời khi người chơi cầu hoà
-};
+(function (root) {
+  const { VALUE, materialDiff } = root.JieqiBots.lib.common;
+  root.JieqiBots.register({
+    id: 'my-bot',
+    name: 'Bot của tôi',
+    description: 'Mô tả ngắn, hiện trong UI',
+    params: { depth: 2 },                       // tham số mặc định, ghi đè được
+    chooseMove(state, J, ctx) {                 // có thể async
+      const moves = J.getLegalMoves(state);
+      return { move: moves[0], info: { score: 0, depth: ctx.params.depth } };   // hoặc chỉ trả về moves[0]
+    },
+    acceptDraw(state, J, ctx) {                 // tuỳ chọn
+      return materialDiff(state, J, ctx.side) < 0;
+    },
+  });
+})(typeof globalThis !== 'undefined' ? globalThis : this);
 ```
 
-Gợi ý hướng làm bot:
+2. Thêm `'<ten-bot>.js'` vào `bots/manifest.js`. Bot tự xuất hiện trong UI (ô chọn Đỏ/Đen) và trong đấu trường.
 
-1. **Expectimax**: ở nước lật quân, duyệt từng loại quân có thể lật ra (`revealProbabilities` + `revealAs`), lấy trung bình có trọng số.
-2. Hàm đánh giá: giá trị quân ngửa + giá trị kỳ vọng của quân úp + độ an toàn của Tướng.
-3. Muốn mạnh hơn: tham khảo Pikafish bản Jieqi hoặc JieqiAI (xem phần dưới), có thể chạy engine qua Web Worker / WASM hoặc một server Python nhỏ.
+`ctx` bot nhận được: `side`, `ply`, `params`, `random()` (có seed trong đấu trường – đừng dùng `Math.random`), `now()`, `timeBudgetMs`, `deadline`, `clock` (`{ myTimeMs, oppTimeMs, incrementMs }` hoặc `null`), `history`. Chi tiết ở đầu `bots/registry.js`.
+
+**Nhiều phong cách từ 1 thuật toán**: dùng biến thể thay vì copy code.
+
+```js
+JieqiBots.variant('my-bot', { id: 'my-bot-endgame', name: 'Bot ưu tiên tàn cuộc', params: { endgameWeight: 2 } });
+```
+
+hoặc chọn nhanh khi chạy đấu trường: `--a my-bot:depth=3,endgameWeight=2`.
+
+**Service bot sau này**: bot chỉ cần `chooseMove` trả về Promise, nên một bot gọi service là một file nhỏ:
+
+```js
+chooseMove: async (state, J, ctx) => {
+  const res = await fetch('http://localhost:8000/move', { method: 'POST', body: JSON.stringify({ state, ctx: { side: ctx.side, timeBudgetMs: ctx.timeBudgetMs } }) });
+  return res.json();   // { move: {from, to}, info }
+}
+```
+
+State là JSON thuần, gửi thẳng được. Đấu trường cũng gọi được bot kiểu này.
+
+## Đấu trường (bot vs bot)
+
+```bash
+npm run bots                                          # liệt kê bot
+npm run arena -- --a greedy --b random --games 200
+npm run arena -- --a greedy:revealBonus=0 --b greedy -n 400 -j 8 --out results/test.json
+npm run arena -- --a my-bot --b greedy --tc 60+1      # đồng hồ thật 60s + 1s/nước, hết giờ là thua
+```
+
+- Mỗi seed chơi 2 ván đổi màu cho công bằng. Cùng seed + cùng bot ⇒ kết quả y hệt (tái lập được để debug).
+- In ra: thắng/hoà/thua (tách theo màu), Elo chênh lệch kèm khoảng tin cậy 95%, LOS (xác suất A mạnh hơn B), thời gian mỗi nước, độ sâu trung bình, lý do kết thúc.
+- Bot đi nước sai luật hoặc bị lỗi ⇒ xử thua (`illegal-move`, `bot-error`), có ghi chi tiết.
+- Quá `--max-plies` (mặc định 300) ⇒ xử hoà.
+- `--out` lưu toàn bộ ván (seed + nước đi); dựng lại bằng `replay(J, record)` trong `arena/match.js`.
+
+Mốc tham khảo hiện tại: `greedy` vs `random` ≈ 95% điểm.
 
 ## Mã nguồn mở tham khảo
 

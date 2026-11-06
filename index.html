@@ -26,11 +26,15 @@
       <div id="status" class="status"></div>
       <p id="toast" class="toast" hidden></p>
 
-      <label class="field">Chế độ
-        <select id="mode">
-          <option value="pvp">Người vs Người (cùng máy)</option>
-        </select>
-      </label>
+      <div class="players">
+        <label class="field">Đỏ
+          <select id="playerR"><option value="human">Người</option></select>
+        </label>
+        <label class="field">Đen
+          <select id="playerB"><option value="human">Người</option></select>
+        </label>
+      </div>
+      <p id="botDesc" class="note bot-desc" hidden></p>
       <label class="field">Thời gian
         <select id="timeControl">
           <option value="0+0">Không tính giờ</option>
@@ -85,7 +89,9 @@
 
   <script src="engine.js"></script>
   <script src="clock.js"></script>
-  <script src="bots/basic-bots.js"></script>
+  <script src="bots/registry.js"></script>
+  <script src="bots/manifest.js"></script>
+  <!-- ui.js tự nạp các bot trong bots/manifest.js -->
   <script src="ui.js"></script>
 </body>
 </html>

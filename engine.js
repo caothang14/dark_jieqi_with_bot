@@ -266,10 +266,11 @@
    * opts.revealAs  – force the identity of the moving hidden piece (for bots / replays)
    * opts.captureAs – force the identity of a captured hidden piece
    * opts.fast      – skip legality check and game-result computation (for bot search)
+   * opts.trusted   – skip only the legality check (caller already validated the move)
    */
   function makeMove(state, move, opts = {}) {
     if (state.result && !opts.fast) throw new Error('Game is over');
-    if (!opts.fast && !getLegalMoves(state).some((m) => m.from === move.from && m.to === move.to)) {
+    if (!opts.fast && !opts.trusted && !getLegalMoves(state).some((m) => m.from === move.from && m.to === move.to)) {
       throw new Error('Illegal move');
     }
     const s = cloneState(state);

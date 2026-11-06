@@ -152,3 +152,12 @@ button.danger { background: #a32a1f; }
 .reveal-all { width: 100%; margin-bottom: 12px; background: var(--accent); }
 .piece.shown { box-shadow: 0 0 0 3px #f5a623, 0 2px 4px rgba(0, 0, 0, .4); }
 .toast { font-size: 13px; color: #7a4b00; margin: -4px 0 10px; }
+
+/* ---------- Chọn người chơi / bot ---------- */
+.players { display: flex; gap: 8px; }
+.players .field { flex: 1; min-width: 0; }
+.players .field:first-child { color: var(--red); font-weight: 600; }
+.players .field:last-child { font-weight: 600; }
+.players select { font-weight: 400; color: var(--text); }
+.bot-desc { color: #7a6650; }
+.log .info { color: #9a8a74; font-size: 11px; margin-left: 4px; }
