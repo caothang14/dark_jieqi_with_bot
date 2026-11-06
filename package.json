@@ -1,0 +1,7 @@
+{
+  "name": "cotuong-up",
+  "version": "0.1.0",
+  "description": "Cờ tướng úp (Jieqi) – local board, ready for bots",
+  "scripts": { "test": "node test/engine.test.js" },
+  "license": "MIT"
+}

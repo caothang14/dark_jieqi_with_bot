@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cờ Tướng Úp</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app">
+    <section class="board-wrap">
+      <div id="clockB" class="clock b"><span class="who">Đen</span><span class="time">--:--</span></div>
+      <div id="board" class="board" aria-label="Bàn cờ">
+        <svg class="grid" viewBox="0 0 900 1000" aria-hidden="true">
+          <g id="lines"></g>
+          <text x="250" y="512" class="river">楚 河</text>
+          <text x="650" y="512" class="river">漢 界</text>
+        </svg>
+        <div id="layer"></div>
+      </div>
+      <div id="clockR" class="clock r"><span class="who">Đỏ</span><span class="time">--:--</span></div>
+    </section>
+
+    <aside class="panel">
+      <h1>Cờ Tướng Úp</h1>
+      <div id="status" class="status"></div>
+
+      <label class="field">Chế độ
+        <select id="mode">
+          <option value="pvp">Người vs Người (cùng máy)</option>
+        </select>
+      </label>
+      <label class="field">Thời gian
+        <select id="timeControl">
+          <option value="0+0">Không tính giờ</option>
+          <option value="3+2">3 phút + 2 giây/nước</option>
+          <option value="5+0">5 phút</option>
+          <option value="10+0" selected>10 phút</option>
+          <option value="10+5">10 phút + 5 giây/nước</option>
+          <option value="15+10">15 phút + 10 giây/nước</option>
+          <option value="30+0">30 phút</option>
+          <option value="custom">Tuỳ chỉnh…</option>
+        </select>
+      </label>
+      <div id="customTime" class="field custom" hidden>
+        <label>Phút <input type="number" id="customMin" min="1" max="180" value="20" /></label>
+        <label>Cộng giây/nước <input type="number" id="customInc" min="0" max="120" value="0" /></label>
+      </div>
+      <p id="tcNote" class="note" hidden>Thời gian mới sẽ áp dụng khi bấm "Ván mới".</p>
+      <label class="field check"><input type="checkbox" id="hint" /> Hiện quân gốc trên quân úp</label>
+
+      <div class="buttons">
+        <button id="newGame">Ván mới</button>
+        <button id="undo">Đi lại</button>
+        <button id="pause">Tạm dừng</button>
+      </div>
+
+      <div class="captured">
+        <div><span class="label">Đỏ đã ăn:</span> <span id="capR"></span></div>
+        <div><span class="label">Đen đã ăn:</span> <span id="capB"></span></div>
+      </div>
+      <div class="pool">
+        <div><span class="label">Đỏ còn úp:</span> <span id="poolR"></span></div>
+        <div><span class="label">Đen còn úp:</span> <span id="poolB"></span></div>
+      </div>
+
+      <h2>Biên bản</h2>
+      <ol id="log" class="log"></ol>
+      <p class="seed">Seed: <span id="seed"></span></p>
+    </aside>
+  </main>
+
+  <script src="engine.js"></script>
+  <script src="clock.js"></script>
+  <script src="bots/basic-bots.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>
