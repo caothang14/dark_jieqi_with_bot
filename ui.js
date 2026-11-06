@@ -109,6 +109,9 @@
     const showHint = $('hint').checked;
     const checkSq = !result && J.isInCheck(s) ? J.kingSquare(s.board, s.turn) : -1;
     const wasHidden = (i) => revealedState && current().board[i] && current().board[i].hidden;
+    const evalInfo = $('showEval').checked && Bots.lib.eval ? Bots.lib.eval.explain(s, J, 'r') : null;
+    const evalValues = new Map(evalInfo ? evalInfo.pieces.map((x) => [x.square, x.value]) : []);
+    renderEval(evalInfo);
 
     if (s.lastMove) {
       for (const sq of [s.lastMove.from, s.lastMove.to]) {
@@ -130,6 +133,15 @@
       el.textContent = p.hidden ? (showHint ? J.NAMES_VI[p.role] : '') : J.CHARS[p.side][p.type];
       el.title = p.hidden ? `Quân úp (đi như ${J.NAMES_VI[p.role]})`
         : J.NAMES_VI[p.type] + (wasHidden(i) ? ' (lật sau khi hết ván)' : '');
+      if (evalInfo && p.type !== 'K') {
+        const v = evalValues.get(i);
+        if (v != null) {
+          const tag = document.createElement('span');
+          tag.className = 'val' + (v < 0 ? ' neg' : '');
+          tag.textContent = Number.isInteger(v) ? v : v.toFixed(1);
+          el.appendChild(tag);
+        }
+      }
       place(el, i);
       el.addEventListener('click', () => onSquare(i));
       layer.appendChild(el);
@@ -146,6 +158,20 @@
     }
     renderPanel(s, result, checkSq >= 0);
     renderClocks();
+  }
+
+  const PHASE_VI = { opening: 'Khai cuộc', middlegame: 'Trung cuộc', endgame: 'Tàn cuộc' };
+  function renderEval(info) {
+    const box = $('evalBox');
+    box.hidden = !info;
+    if (!info) return;
+    const f = (x) => (x > 0 ? '+' : '') + x.toFixed(2);
+    // thanh: tỉ lệ Đỏ theo hàm logistic của điểm
+    const pct = info.terminal ? (info.score > 0 ? 100 : info.score < 0 ? 0 : 50) : 100 / (1 + Math.exp(-info.score / 4));
+    const lead = info.score > 0.05 ? 'Đỏ hơn' : info.score < -0.05 ? 'Đen hơn' : 'Cân bằng';
+    box.innerHTML = `<div><span class="big">${f(info.score)}</span> <span class="muted">(${lead}, góc nhìn Đỏ) · ${PHASE_VI[info.phase]}</span></div>`
+      + `<div class="eval-bar"><div style="width:${pct}%"></div></div>`
+      + (info.terminal ? '' : `<div class="muted">Quân ${f(info.material)} · Cơ động ${f(info.mobility)} · Chiếu ${f(info.check)}</div>`);
   }
 
   function renderPanel(s, result, inCheck) {
@@ -443,6 +469,7 @@
   $('confirmYes').addEventListener('click', () => { const c = pendingConfirm; pendingConfirm = null; if (c) c.onYes(); render(); });
   $('confirmNo').addEventListener('click', () => { pendingConfirm = null; render(); maybeBotMove(); });
   $('hint').addEventListener('change', render);
+  $('showEval').addEventListener('change', render);
   $('timeControl').addEventListener('change', onTimeControlChange);
   $('customMin').addEventListener('change', onTimeControlChange);
   $('customInc').addEventListener('change', onTimeControlChange);

@@ -161,3 +161,16 @@ button.danger { background: #a32a1f; }
 .players select { font-weight: 400; color: var(--text); }
 .bot-desc { color: #7a6650; }
 .log .info { color: #9a8a74; font-size: 11px; margin-left: 4px; }
+
+/* ---------- Đánh giá thế cờ ---------- */
+.eval-box { font-size: 13px; background: #f6efe2; border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+.eval-box[hidden] { display: none; }
+.eval-bar { height: 8px; border-radius: 4px; background: #222; overflow: hidden; margin: 4px 0 6px; }
+.eval-bar > div { height: 100%; background: var(--red); transition: width .2s; }
+.eval-box .big { font-weight: 700; font-size: 15px; }
+.eval-box .muted { color: #7a6650; }
+.piece .val {
+  position: absolute; right: -6px; bottom: -6px; font: 600 10px system-ui, sans-serif;
+  background: #fff; color: #333; border-radius: 6px; padding: 0 3px; box-shadow: 0 1px 2px rgba(0,0,0,.3);
+}
+.piece .val.neg { background: #ffd9d6; }

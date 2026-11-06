@@ -49,8 +49,9 @@ npm test
 | `ui.js` | Vẽ bàn cờ, xử lý click, đi lại (undo), biên bản; chọn Người/bot cho từng bên |
 | `bots/registry.js` | Nơi đăng ký bot + giao diện chung (`JieqiBots`) |
 | `bots/manifest.js` | Danh sách file bot – **thêm bot mới chỉ cần sửa file này** |
-| `bots/lib/common.js` | Helper dùng chung: giá trị quân, tính chênh lệch quân… |
-| `bots/random.js`, `bots/greedy.js` | 2 bot mẫu |
+| `bots/lib/common.js` | Helper dùng chung (giá trị quân đơn giản, chọn ngẫu nhiên…) |
+| `bots/lib/eval.js` | Hàm đánh giá thế cờ (giá trị quân theo giai đoạn, cơ động, chiếu) |
+| `bots/random.js`, `bots/greedy.js`, `bots/eval1.js` | Các bot: ngẫu nhiên, tham ăn, đánh giá 1 nước |
 | `bots/index.js` | Nạp toàn bộ bot trong Node |
 | `arena/match.js` | Chơi 1 ván bot vs bot, replay ván từ record |
 | `arena/arena.js` | Đấu trường: chạy song song nhiều ván, thống kê Elo |
@@ -117,6 +118,36 @@ chooseMove: async (state, J, ctx) => {
 ```
 
 State là JSON thuần, gửi thẳng được. Đấu trường cũng gọi được bot kiểu này.
+
+## Hàm đánh giá thế cờ (`bots/lib/eval.js`)
+
+Điểm = **giá trị quân** + **cơ động** (0.02 × chênh lệch số nước đi) + **chiếu** (±0.3). Thắng/thua = ±1000.
+
+| Quân | Giá trị |
+|---|---|
+| Tốt | -1 ở tâm cung của mình (vướng Tướng – đối phương không nên ăn), 1 chưa qua sông, 2 đã qua sông, 0.5 khi lụt (hàng cuối đối phương) |
+| Tượng | 1 |
+| Sĩ | 2; 3 khi có Sĩ giao nhau (2 Sĩ chéo cạnh nhau, bảo vệ nhau) |
+| Mã | 3 khai cuộc · 4 trung cuộc · 5 tàn cuộc |
+| Pháo | 5 khai cuộc · 4 trung cuộc · 3 tàn cuộc |
+| Xe | 9.5 khai cuộc · 9 trung cuộc · 10 tàn cuộc |
+| Quân úp | trung bình theo xác suất lật ra, mỗi khả năng chấm như đã lật tại ô đang đứng |
+
+Giai đoạn theo số quân còn trên bàn / 32 (tính cả Tướng và quân úp): > 90% (≥ 29 quân) khai cuộc, > 50% (17–28) trung cuộc, còn lại tàn cuộc.
+
+Mọi hệ số đều ghi đè được, không cần sửa code:
+
+```bash
+npm run arena -- --a eval-1ply:R.endgame=11,mobility=0 --b eval-1ply
+```
+
+```js
+JieqiBots.variant('eval-1ply', { id: 'tan-cuoc', name: 'Ưu tiên tàn cuộc', params: { 'H.endgame': 6, 'P.crossed': 2.5 } });
+```
+
+Trong UI, bật "Hiện đánh giá thế cờ" để xem điểm (góc nhìn Đỏ), giai đoạn và giá trị từng quân ngay trên bàn cờ.
+
+Bot dùng hàm này: `eval-1ply` (đầy đủ) và `material-1ply` (chỉ tính quân). Cả hai đều mới nhìn 1 nước nên chỉ ngang bot tham ăn (~54%) – hàm đánh giá chỉ phát huy khi có tìm kiếm nhiều nước (bước 3).
 
 ## Đấu trường (bot vs bot)
 

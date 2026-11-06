@@ -227,6 +227,20 @@
     return moves;
   }
 
+  /**
+   * Đếm nhanh số nước đi "giả hợp lệ" của `side` (không loại nước tự để Tướng bị chiếu).
+   * Rẻ hơn getLegalMoves nhiều – dùng cho đánh giá độ cơ động.
+   */
+  function countPseudoMoves(state, side) {
+    const board = state.board;
+    let n = 0;
+    for (let i = 0; i < board.length; i++) {
+      const p = board[i];
+      if (p && p.side === side) n += pseudoTargets(board, i).length;
+    }
+    return n;
+  }
+
   function getLegalMovesFrom(state, from) {
     return getLegalMoves(state).filter((m) => m.from === from);
   }
@@ -356,7 +370,7 @@
     W, H, TYPES, START_POOL, NAMES_VI, CHARS,
     idx, X, Y, opp,
     createGame, cloneState,
-    getLegalMoves, getLegalMovesFrom, makeMove, revealAll,
+    getLegalMoves, getLegalMovesFrom, countPseudoMoves, makeMove, revealAll,
     isInCheck, kingSquare, revealProbabilities,
     squareName, toAscii,
   };

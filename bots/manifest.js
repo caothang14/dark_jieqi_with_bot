@@ -5,8 +5,10 @@
 (function (root) {
   const files = [
     'lib/common.js',
+    'lib/eval.js',
     'random.js',
     'greedy.js',
+    'eval1.js',
   ];
   if (typeof module !== 'undefined' && module.exports) module.exports = files;
   else root.JieqiBotManifest = files;
