@@ -302,6 +302,21 @@
     return s;
   }
 
+  /**
+   * Lật hết quân úp còn trên bàn (dùng khi hết ván để xem quân thật).
+   * Trả về state MỚI; danh tính rút từ pool như khi lật bình thường.
+   */
+  function revealAll(state) {
+    const s = cloneState(state);
+    s.board.forEach((p) => {
+      if (p && p.hidden) {
+        p.type = drawFromPool(s, p.side);
+        p.hidden = false;
+      }
+    });
+    return s;
+  }
+
   function computeResult(s) {
     if (getLegalMoves(s).length === 0) {
       return { winner: opp(s.turn), reason: isInCheck(s) ? 'checkmate' : 'stalemate' };
@@ -340,7 +355,7 @@
     W, H, TYPES, START_POOL, NAMES_VI, CHARS,
     idx, X, Y, opp,
     createGame, cloneState,
-    getLegalMoves, getLegalMovesFrom, makeMove,
+    getLegalMoves, getLegalMovesFrom, makeMove, revealAll,
     isInCheck, kingSquare, revealProbabilities,
     squareName, toAscii,
   };

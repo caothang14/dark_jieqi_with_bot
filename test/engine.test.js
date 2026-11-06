@@ -71,6 +71,18 @@ test('checkmate detected', () => {
   assert.deepStrictEqual(s.result, { winner: 'r', reason: 'checkmate' });
 });
 
+test('revealAll reveals every hidden piece and empties the pools', () => {
+  let s = J.createGame({ seed: 9 });
+  s = J.makeMove(s, J.getLegalMoves(s)[0]);
+  const r = J.revealAll(s);
+  assert.ok(r.board.every((p) => !p || !p.hidden));
+  assert.strictEqual(Object.values(r.pools.r).reduce((a, b) => a + b, 0), 0);
+  assert.ok(s.board.some((p) => p && p.hidden)); // original untouched
+  const count = (t) => r.board.filter((p) => p && p.side === 'r' && p.type === t).length;
+  assert.strictEqual(count('P'), 5);
+  assert.strictEqual(count('R'), 2);
+});
+
 test('100 random games: no crashes, pools stay consistent', () => {
   for (let g = 0; g < 100; g++) {
     let s = J.createGame({ seed: g });

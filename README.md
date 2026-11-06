@@ -31,6 +31,13 @@ npm test
 - Đổi thời gian giữa ván thì áp dụng từ ván mới.
 - Logic đồng hồ nằm riêng trong `clock.js` (class `ChessClock`), dùng lại được cho bot (ví dụ bot tự chia thời gian suy nghĩ).
 
+## Kết thúc ván
+
+- **Chịu thua**: chơi 2 người thì bên đang tới lượt chịu thua; đấu bot thì người chơi chịu thua. Có bước xác nhận.
+- **Cầu hoà**: chơi 2 người thì bên kia bấm Đồng ý / Từ chối; đấu bot thì bot tự quyết qua hàm `acceptDraw` (bot tham ăn đồng ý khi đang kém hoặc ngang quân).
+- **Lật hết quân úp**: hiện sau khi hết ván; quân lật thêm có viền cam. Engine có hàm `Jieqi.revealAll(state)`.
+- Bấm "Đi lại" ngay sau khi chịu thua / hoà / hết giờ sẽ huỷ kết quả đó và chơi tiếp.
+
 > Nếu luật bạn hay chơi khác (ví dụ Sĩ/Tượng lật rồi vẫn bị giới hạn), sửa hàm `pseudoTargets` trong `engine.js`.
 
 ## Cấu trúc
@@ -53,6 +60,7 @@ Jieqi.makeMove(s, move, { revealAs: 'R' })     // ép quân lật ra là Xe (cho
 Jieqi.makeMove(s, move, { captureAs: 'C' })    // ép quân úp bị ăn là Pháo
 Jieqi.makeMove(s, move, { fast: true })        // bỏ kiểm tra hợp lệ/kết quả, cho search nhanh
 Jieqi.revealProbabilities(s, 'b')              // { R: 0.2, C: 0.13, ... } xác suất lật ra
+Jieqi.revealAll(s)                             // lật hết quân úp (chỉ để xem khi hết ván)
 Jieqi.isInCheck(s), s.result, s.turn, s.board, s.pools
 ```
 
@@ -68,6 +76,7 @@ window.JieqiBots.myBot = {
   chooseMove(state, J) {       // có thể trả về Promise (ví dụ gọi Web Worker hoặc server)
     return J.getLegalMoves(state)[0];
   },
+  acceptDraw(state, J) { return false; },   // tuỳ chọn: trả lời khi người chơi cầu hoà
 };
 ```
 

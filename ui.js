@@ -8,6 +8,7 @@
   const SIDE_VI = { r: 'Đỏ', b: 'Đen' };
   const REASON_VI = {
     checkmate: 'chiếu bí', stalemate: 'hết nước đi', timeout: 'hết giờ',
+    resign: 'đối thủ chịu thua', agreement: 'hai bên đồng ý hoà',
     'quiet-limit': 'quá 120 nước không ăn/lật quân',
   };
   const LOW_TIME_MS = 10000;
@@ -18,11 +19,14 @@
   let history = [];       // stack of states; current = last
   let clockSnaps = [];    // clockSnaps[i] = thời gian còn lại của 2 bên khi bắt đầu history[i]
   let clock = null;
-  let timeoutResult = null;
+  let endResult = null;     // kết quả không đến từ engine: hết giờ / chịu thua / hoà thoả thuận
+  let revealedState = null; // bản lật hết quân úp, chỉ để xem sau khi hết ván
+  let pendingConfirm = null;
   let selected = -1;
   let botThinking = false;
   const current = () => history[history.length - 1];
-  const gameResult = () => current().result || timeoutResult;
+  const displayState = () => revealedState || current();
+  const gameResult = () => current().result || endResult;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // ---------- Board grid ----------
@@ -61,11 +65,7 @@
     clock = new ChessClock({
       ...readTimeControl(),
       onTick: renderClocks,
-      onTimeout: (side) => {
-        timeoutResult = { winner: J.opp(side), reason: 'timeout' };
-        selected = -1;
-        render();
-      },
+      onTimeout: (side) => endGame({ winner: J.opp(side), reason: 'timeout' }),
     });
     $('tcNote').hidden = true;
   }
@@ -89,11 +89,12 @@
 
   // ---------- Rendering ----------
   function render() {
-    const s = current();
+    const s = displayState();
     const result = gameResult();
     layer.innerHTML = '';
     const showHint = $('hint').checked;
     const checkSq = !result && J.isInCheck(s) ? J.kingSquare(s.board, s.turn) : -1;
+    const wasHidden = (i) => revealedState && current().board[i] && current().board[i].hidden;
 
     if (s.lastMove) {
       for (const sq of [s.lastMove.from, s.lastMove.to]) {
@@ -110,9 +111,11 @@
       el.className = `piece ${p.side}${p.hidden ? ' hidden' : ''}`;
       if (i === selected) el.classList.add('selected');
       if (i === checkSq) el.classList.add('in-check');
-      if (s.lastMove && s.lastMove.to === i && s.lastMove.revealed) el.classList.add('reveal');
+      if (s.lastMove && s.lastMove.to === i && s.lastMove.revealed && !revealedState) el.classList.add('reveal');
+      if (wasHidden(i)) el.classList.add('shown', 'reveal');
       el.textContent = p.hidden ? (showHint ? J.NAMES_VI[p.role] : '') : J.CHARS[p.side][p.type];
-      el.title = p.hidden ? `Quân úp (đi như ${J.NAMES_VI[p.role]})` : J.NAMES_VI[p.type];
+      el.title = p.hidden ? `Quân úp (đi như ${J.NAMES_VI[p.role]})`
+        : J.NAMES_VI[p.type] + (wasHidden(i) ? ' (lật sau khi hết ván)' : '');
       place(el, i);
       el.addEventListener('click', () => onSquare(i));
       layer.appendChild(el);
@@ -135,8 +138,10 @@
     const st = $('status');
     if (result) {
       st.className = 'status over';
+      const reason = result.reason === 'resign'
+        ? `${SIDE_VI[J.opp(result.winner)]} chịu thua` : REASON_VI[result.reason];
       st.textContent = result.winner
-        ? `${SIDE_VI[result.winner]} thắng (${REASON_VI[result.reason]})`
+        ? `${SIDE_VI[result.winner]} thắng (${reason})`
         : `Hoà (${REASON_VI[result.reason]})`;
     } else {
       st.className = `status ${s.turn}`;
@@ -167,12 +172,83 @@
     });
     log.scrollTop = log.scrollHeight;
     $('seed').textContent = history[0].seed;
-    $('undo').disabled = history.length <= 1 || botThinking;
+    $('undo').disabled = (history.length <= 1 && !endResult) || botThinking;
+    $('offerDraw').disabled = !!result || !!pendingConfirm || botThinking;
+    $('resign').disabled = !!result || !!pendingConfirm;
+    const anyHidden = current().board.some((p) => p && p.hidden);
+    $('revealAll').hidden = !result || !anyHidden || !!revealedState;
+    $('confirmBar').hidden = !pendingConfirm;
+    if (pendingConfirm) {
+      $('confirmText').textContent = pendingConfirm.text;
+      $('confirmYes').textContent = pendingConfirm.yes;
+      $('confirmNo').textContent = pendingConfirm.no;
+    }
+    $('toast').hidden = !toastText;
+    $('toast').textContent = toastText;
+  }
+
+  // ---------- Kết thúc ván: chịu thua / cầu hoà / lật quân ----------
+  let toastText = '';
+  let toastTimer = null;
+  function toast(text) {
+    toastText = text;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastText = ''; render(); }, 3000);
+  }
+
+  function endGame(result) {
+    if (gameResult()) return;
+    endResult = result;
+    pendingConfirm = null;
+    selected = -1;
+    clock.stop();
+    render();
+  }
+
+  // Bên đang thao tác: vs bot luôn là người (Đỏ); 2 người thì là bên đang tới lượt.
+  const actingSide = () => (botKey() ? J.opp(BOT_SIDE) : current().turn);
+
+  function askConfirm(text, yes, no, onYes) {
+    pendingConfirm = { text, yes, no, onYes };
+    selected = -1;
+    render();
+  }
+
+  function resign() {
+    if (gameResult()) return;
+    const side = actingSide();
+    askConfirm(`${SIDE_VI[side]} chắc chắn chịu thua?`, 'Chịu thua', 'Huỷ',
+      () => endGame({ winner: J.opp(side), reason: 'resign' }));
+  }
+
+  async function offerDraw() {
+    if (gameResult()) return;
+    const side = actingSide();
+    const key = botKey();
+    if (!key) {
+      askConfirm(`${SIDE_VI[side]} cầu hoà. ${SIDE_VI[J.opp(side)]} có đồng ý không?`, 'Đồng ý hoà', 'Từ chối',
+        () => endGame({ winner: null, reason: 'agreement' }));
+      return;
+    }
+    const bot = BOTS[key];
+    let accept = false;
+    try {
+      accept = bot.acceptDraw ? await bot.acceptDraw(J.cloneState(current()), J) : false;
+    } catch (err) { console.error('Bot error:', err); }
+    if (accept) endGame({ winner: null, reason: 'agreement' });
+    else { toast(`${bot.name} từ chối hoà.`); render(); }
+  }
+
+  function revealAll() {
+    if (!gameResult()) return;
+    revealedState = J.revealAll(current());
+    render();
   }
 
   // ---------- Interaction ----------
   const botKey = () => ($('mode').value === 'pvp' ? null : $('mode').value);
-  const humanCanMove = () => !botThinking && !clock.paused && !(botKey() && current().turn === BOT_SIDE);
+  const humanCanMove = () => !botThinking && !clock.paused && !pendingConfirm
+    && !(botKey() && current().turn === BOT_SIDE);
 
   function onSquare(i) {
     const s = current();
@@ -222,18 +298,32 @@
     createClock();
     history = [J.createGame()];
     clockSnaps = [clock.snapshot()];
-    timeoutResult = null;
+    endResult = null;
+    revealedState = null;
+    pendingConfirm = null;
     selected = -1;
     botThinking = false;
     render();
   }
 
   function undo() {
-    if (history.length <= 1 || botThinking) return;
+    if (botThinking) return;
+    // Vừa chịu thua / hoà / hết giờ: "Đi lại" chỉ huỷ kết quả đó, không lùi nước
+    if (endResult) {
+      endResult = null;
+      revealedState = null;
+      clock.restore(clockSnaps[clockSnaps.length - 1], history.length > 1 ? current().turn : null);
+      render();
+      maybeBotMove();
+      return;
+    }
+    if (history.length <= 1) return;
     history.pop(); clockSnaps.pop();
     // vs bot: also take back the bot's move so it's the human's turn again
     if (botKey() && current().turn === BOT_SIDE && history.length > 1) { history.pop(); clockSnaps.pop(); }
-    timeoutResult = null;
+    endResult = null;
+    revealedState = null;
+    pendingConfirm = null;
     // đồng hồ chỉ chạy sau nước đầu tiên
     clock.restore(clockSnaps[clockSnaps.length - 1], history.length > 1 ? current().turn : null);
     selected = -1;
@@ -268,6 +358,11 @@
   $('newGame').addEventListener('click', newGame);
   $('undo').addEventListener('click', undo);
   $('pause').addEventListener('click', togglePause);
+  $('resign').addEventListener('click', resign);
+  $('offerDraw').addEventListener('click', offerDraw);
+  $('revealAll').addEventListener('click', revealAll);
+  $('confirmYes').addEventListener('click', () => { const c = pendingConfirm; pendingConfirm = null; if (c) c.onYes(); render(); });
+  $('confirmNo').addEventListener('click', () => { pendingConfirm = null; render(); });
   $('hint').addEventListener('change', render);
   $('timeControl').addEventListener('change', onTimeControlChange);
   $('customMin').addEventListener('change', onTimeControlChange);

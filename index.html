@@ -24,6 +24,7 @@
     <aside class="panel">
       <h1>Cờ Tướng Úp</h1>
       <div id="status" class="status"></div>
+      <p id="toast" class="toast" hidden></p>
 
       <label class="field">Chế độ
         <select id="mode">
@@ -54,6 +55,18 @@
         <button id="undo">Đi lại</button>
         <button id="pause">Tạm dừng</button>
       </div>
+      <div class="buttons">
+        <button id="offerDraw" class="secondary">Cầu hoà</button>
+        <button id="resign" class="danger">Chịu thua</button>
+      </div>
+      <div id="confirmBar" class="confirm" hidden>
+        <p id="confirmText"></p>
+        <div class="buttons">
+          <button id="confirmYes"></button>
+          <button id="confirmNo" class="secondary"></button>
+        </div>
+      </div>
+      <button id="revealAll" class="reveal-all" hidden>Lật hết quân úp</button>
 
       <div class="captured">
         <div><span class="label">Đỏ đã ăn:</span> <span id="capR"></span></div>

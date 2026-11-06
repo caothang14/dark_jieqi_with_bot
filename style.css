@@ -137,3 +137,18 @@ button:hover { opacity: .9; }
 .field.custom input { width: 100%; padding: 5px; margin-top: 2px; }
 .note { font-size: 12px; color: #9a6b1f; margin: -2px 0 8px; }
 button:disabled { opacity: .4; cursor: default; }
+
+/* ---------- Cầu hoà / chịu thua / lật quân ---------- */
+.buttons + .buttons { margin-top: -4px; }
+button.secondary { background: #e2d3bb; color: var(--text); }
+button.danger { background: #a32a1f; }
+.confirm {
+  background: #fff3d6; border: 1px solid #e0b452; border-radius: 6px;
+  padding: 8px 10px; margin-bottom: 12px;
+}
+.confirm[hidden], .reveal-all[hidden] { display: none; }
+.confirm p { margin: 0 0 6px; font-weight: 600; font-size: 14px; }
+.confirm .buttons { margin: 0; }
+.reveal-all { width: 100%; margin-bottom: 12px; background: var(--accent); }
+.piece.shown { box-shadow: 0 0 0 3px #f5a623, 0 2px 4px rgba(0, 0, 0, .4); }
+.toast { font-size: 13px; color: #7a4b00; margin: -4px 0 10px; }
