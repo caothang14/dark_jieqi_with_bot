@@ -51,7 +51,7 @@ npm test
 | `bots/manifest.js` | Danh sách file bot – **thêm bot mới chỉ cần sửa file này** |
 | `bots/lib/common.js` | Helper dùng chung (giá trị quân đơn giản, chọn ngẫu nhiên…) |
 | `bots/lib/eval.js` | Hàm đánh giá thế cờ (giá trị quân theo giai đoạn, cơ động, chiếu) |
-| `bots/random.js`, `bots/greedy.js`, `bots/eval1.js` | Các bot: ngẫu nhiên, tham ăn, đánh giá 1 nước |
+| `bots/random.js`, `bots/greedy.js`, `bots/eval1.js`, `bots/search.js` | Các bot: ngẫu nhiên, tham ăn, đánh giá 1 nước, tìm kiếm nhiều nước |
 | `bots/index.js` | Nạp toàn bộ bot trong Node |
 | `arena/match.js` | Chơi 1 ván bot vs bot, replay ván từ record |
 | `arena/arena.js` | Đấu trường: chạy song song nhiều ván, thống kê Elo |
@@ -149,6 +149,29 @@ Trong UI, bật "Hiện đánh giá thế cờ" để xem điểm (góc nhìn Đ
 
 Bot dùng hàm này: `eval-1ply` (đầy đủ) và `material-1ply` (chỉ tính quân). Cả hai đều mới nhìn 1 nước nên chỉ ngang bot tham ăn (~54%) – hàm đánh giá chỉ phát huy khi có tìm kiếm nhiều nước (bước 3).
 
+## Bot tìm kiếm (`bots/search.js`)
+
+Nhìn trước nhiều nước:
+
+- **Alpha-beta (negamax)**: thử nước của mình, nước đáp của đối thủ…, cắt các nhánh chắc chắn kém.
+- **Nút may rủi khi lật quân**: nước lật quân được tính bằng trung bình có trọng số theo xác suất từng loại quân lật ra (expectimax, cắt nhánh kiểu Star1). Ăn quân úp thì *không* tách nhánh: bàn cờ sau khi ăn giống nhau với mọi danh tính, và giữ nguyên pool cho đúng xác suất kỳ vọng (`makeMove(..., { captureUnknown: true })`).
+- **Quiescence**: hết độ sâu mà còn nước ăn quân thì tìm tiếp các nước ăn (thấy được "ăn rồi bị ăn lại"); đang bị chiếu thì xét đủ nước thoát chiếu (2 nửa nước đầu). Quân úp chỉ được ăn ở nửa nước đầu của quiescence, kèm delta pruning – để cây không bùng nổ.
+- **Sắp xếp nước**: ăn quân đắt bằng quân rẻ trước (MVV-LVA), rồi đến nước từng gây cắt nhánh (history).
+- **Đào sâu dần** theo thời gian (1, 2, 3… đến khi hết giờ); hết giờ giữa chừng vẫn dùng được kết quả của vòng trước.
+
+| Bot | Phong cách |
+|---|---|
+| `search` | Bot tìm kiếm – tối đa 2 giây/nước |
+| `search-fast` | Tối đa 0,3 giây/nước |
+| `search-midgame` | Đi nhanh khai cuộc, dành gấp 2,5 lần thời gian cho trung cuộc |
+| `search-endgame` | Đánh giá cao Mã/Xe/Tốt qua sông ở tàn cuộc, nghĩ lâu hơn khi vào tàn cuộc |
+
+Tham số chính: `depth` (cố định độ sâu – tái lập được), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, cùng mọi trọng số của hàm đánh giá. Ví dụ: `--a search:depth=2`, `--a search:maxTimeMs=500,R.endgame=11`.
+
+**Kết quả** (40 ván, 0,5 giây/nước): `search` thắng `greedy` **92,5%** (+37 =0 -3), ván trung bình 44 nửa nước.
+
+**Giới hạn hiện tại**: ở khai cuộc (nhiều quân úp, nước nào cũng lật quân) bot chỉ kịp tính ~1–2 nước trong 0,5 giây, nên có thể lọt đòn chiếu bí bằng nước đi thường. Trung/tàn cuộc đạt 3–4 nước. Bot chạy trên luồng chính nên UI đứng hình trong lúc bot nghĩ. Bước 4 (tăng tốc engine) và bước 5 (Web Worker) sẽ xử lý.
+
 ## Đấu trường (bot vs bot)
 
 ```bash
@@ -164,7 +187,7 @@ npm run arena -- --a my-bot --b greedy --tc 60+1      # đồng hồ thật 60s 
 - Quá `--max-plies` (mặc định 300) ⇒ xử hoà.
 - `--out` lưu toàn bộ ván (seed + nước đi); dựng lại bằng `replay(J, record)` trong `arena/match.js`.
 
-Mốc tham khảo hiện tại: `greedy` vs `random` ≈ 95% điểm.
+Mốc tham khảo hiện tại: `greedy` vs `random` ≈ 95% điểm; `search` vs `greedy` ≈ 92,5%.
 
 ## Mã nguồn mở tham khảo
 

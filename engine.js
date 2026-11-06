@@ -209,15 +209,20 @@
   const isInCheck = (state, side = state.turn) => inCheckOnBoard(state.board, side);
 
   // ---------- Move generation ----------
-  /** All legal moves for the side to move: [{ from, to }]. */
-  function getLegalMoves(state) {
+  /**
+   * All legal moves for the side to move: [{ from, to }].
+   * opts.capturesOnly – only moves that capture (for quiescence search)
+   */
+  function getLegalMoves(state, opts) {
     const side = state.turn;
     const board = state.board;
+    const capturesOnly = !!(opts && opts.capturesOnly);
     const moves = [];
     for (let from = 0; from < board.length; from++) {
       const p = board[from];
       if (!p || p.side !== side) continue;
       for (const to of pseudoTargets(board, from)) {
+        if (capturesOnly && !board[to]) continue;
         const nb = board.slice();
         nb[to] = p;
         nb[from] = null;
@@ -281,6 +286,7 @@
    * opts.captureAs – force the identity of a captured hidden piece
    * opts.fast      – skip legality check and game-result computation (for bot search)
    * opts.trusted   – skip only the legality check (caller already validated the move)
+   * opts.captureUnknown – capturing a hidden piece does not draw its identity (search only)
    */
   function makeMove(state, move, opts = {}) {
     if (state.result && !opts.fast) throw new Error('Game is over');
@@ -296,7 +302,10 @@
     };
 
     if (target) {
-      const type = target.hidden ? drawFromPool(s, target.side, opts.captureAs) : target.type;
+      // captureUnknown: ăn quân úp mà không bốc từ pool (dùng trong tìm kiếm – tỉ lệ pool giữ nguyên
+      // đúng bằng kỳ vọng). Khi đó type = null và pool có thể nhiều hơn số quân úp còn trên bàn.
+      const type = !target.hidden ? target.type
+        : opts.captureUnknown ? null : drawFromPool(s, target.side, opts.captureAs);
       info.captured = { side: target.side, type, wasHidden: target.hidden };
       s.captured[p.side].push(info.captured);
     }

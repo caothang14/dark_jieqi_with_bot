@@ -9,6 +9,7 @@
     'random.js',
     'greedy.js',
     'eval1.js',
+    'search.js',
   ];
   if (typeof module !== 'undefined' && module.exports) module.exports = files;
   else root.JieqiBotManifest = files;

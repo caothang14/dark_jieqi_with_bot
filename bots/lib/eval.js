@@ -164,9 +164,45 @@
     return { score, terminal: false, phase, material: mat, mobility: mob, check: chk, pieces };
   }
 
+  // ── Bản nhanh cho tìm kiếm (cùng kết quả với explain, không dựng danh sách quân) ──
+  /** Giá trị quân úp của `side` = base + pawnProb * (giá trị Tốt tại ô đó). */
+  function hiddenStats(state, J, side, phase, w) {
+    const probs = J.revealProbabilities(state, side);
+    let base = w.hiddenBonus, pawnProb = 0;
+    for (const t in probs) {
+      if (t === 'P') pawnProb = probs[t];
+      else base += probs[t] * (t === 'A' ? w.A.single : t === 'E' ? w.E : w[t][phase]);
+    }
+    return { base, pawnProb };
+  }
+
   /** Điểm theo góc nhìn `side` (dương = `side` đang hơn). */
   function evaluate(state, J, side, w = DEFAULT_WEIGHTS) {
-    return explain(state, J, side, w).score;
+    if (state.result) return state.result.winner == null ? 0 : state.result.winner === side ? w.win : -w.win;
+    const phase = gamePhase(state, w);
+    const hs = { r: null, b: null };
+    let mat = 0;
+    const board = state.board;
+    for (let i = 0; i < board.length; i++) {
+      const p = board[i];
+      if (!p || p.type === 'K') continue;
+      let v;
+      if (p.hidden) {
+        const h = hs[p.side] || (hs[p.side] = hiddenStats(state, J, p.side, phase, w));
+        v = h.base + (h.pawnProb ? h.pawnProb * typeValueAt(state, J, 'P', p.side, i, phase, w) : 0);
+      } else {
+        v = typeValueAt(state, J, p.type, p.side, i, phase, w);
+      }
+      mat += p.side === side ? v : -v;
+    }
+    const opp = J.opp(side);
+    let score = mat;
+    if (w.mobility) score += w.mobility * (mobilityCount(state, J, side) - mobilityCount(state, J, opp));
+    if (w.check) {
+      if (J.isInCheck(state, opp)) score += w.check;
+      if (J.isInCheck(state, side)) score -= w.check;
+    }
+    return score;
   }
 
   const lib = (root.JieqiBots.lib = root.JieqiBots.lib || {});
