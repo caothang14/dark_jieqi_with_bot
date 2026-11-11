@@ -1,20 +1,20 @@
-/* Bản bot tìm kiếm ở bước 3 – giữ nguyên để làm mốc so sánh trong đấu trường (ẩn khỏi UI). */
+/* The step-3 search bot – kept unchanged as a reference for the arena (hidden from the UI). */
 /*
- * Bot tìm kiếm: alpha-beta (negamax) + nút may rủi khi lật quân (expectimax, cắt nhánh kiểu Star1)
- * + quiescence (tìm tiếp các nước ăn quân) + đào sâu dần theo thời gian.
+ * Search bot: alpha-beta (negamax) + chance nodes for reveals (expectimax, Star1-style pruning)
+ * + quiescence (keeps searching captures) + time-based iterative deepening.
  *
- * Tham số (ghi đè được qua spec, vd 'search:depth=3' hoặc 'search:maxTimeMs=500,R.endgame=11'):
- *   depth        >0: tìm đúng độ sâu này (tái lập được, không phụ thuộc máy); 0: theo thời gian
- *   maxDepth     độ sâu tối đa khi tìm theo thời gian
- *   maxTimeMs    trần thời gian mỗi nước (ms)
- *   timeScale    nhân thời gian gợi ý
- *   phaseTime    nhân thời gian theo giai đoạn { opening, middlegame, endgame }
- *   qDepth       số nửa nước tối đa của quiescence
- *   qHiddenPly   quân úp chỉ được ăn trong quiescence ở các nửa nước < giá trị này
- *   qCheckPly    xét đủ nước thoát chiếu trong quiescence ở các nửa nước < giá trị này
- *   deltaMargin  biên của delta pruning trong quiescence
- *   chanceBound  biên điểm dùng ở nút may rủi (điểm con bị kẹp vào [-b, b])
- *   + mọi trọng số của hàm đánh giá (bots/lib/eval.js): 'R.endgame', 'mobility', ...
+ * Params (overridable via the spec, e.g. 'search:depth=3' or 'search:maxTimeMs=500,R.endgame=11'):
+ *   depth        >0: search exactly this depth (reproducible, machine-independent); 0: time-based
+ *   maxDepth     maximum depth for time-based search
+ *   maxTimeMs    time cap per move (ms)
+ *   timeScale    multiplier on the suggested time
+ *   phaseTime    time multiplier per game phase { opening, middlegame, endgame }
+ *   qDepth       maximum quiescence depth in plies
+ *   qHiddenPly   hidden pieces may capture in quiescence only at plies < this value
+ *   qCheckPly    consider all check evasions in quiescence at plies < this value
+ *   deltaMargin  delta-pruning margin in quiescence
+ *   chanceBound  score bound used at chance nodes (child scores are clamped to [-b, b])
+ *   + every evaluation weight (bots/lib/eval.js): 'R.endgame', 'mobility', ...
  */
 (function (root) {
   'use strict';
@@ -27,9 +27,9 @@
   const HIDDEN_ORDER_VALUE = 3;
 
   /**
-   * Các kết cục của 1 nước, xác suất giảm dần. Chỉ tách theo quân MÌNH lật ra gì (vì nó quyết định
-   * quân đó đi thế nào về sau). Ăn quân úp thì không tách: bàn cờ sau khi ăn như nhau với mọi danh tính,
-   * và giữ nguyên pool cho ra đúng xác suất kỳ vọng (captureUnknown).
+   * Outcomes of a move, by decreasing probability. Only split on what OUR piece is revealed as (since that decides
+   * how it moves afterwards). Capturing a hidden piece does not split: the board after the capture is the same for
+   * every identity, and leaving the pool unchanged gives exactly the expected probabilities (captureUnknown).
    */
   function outcomes(state, J, m) {
     const mover = state.board[m.from];
@@ -69,8 +69,8 @@
     }
 
     /**
-     * Giá trị của nước m theo góc nhìn bên đi. child(next, alpha, beta) trả về giá trị theo góc nhìn bên kia.
-     * Nước có lật quân / ăn quân úp là nút may rủi: lấy kỳ vọng, cắt nhánh kiểu Star1.
+     * Value of move m from the mover's point of view. child(next, alpha, beta) returns the value from the other side's view.
+     * A move that reveals / captures a hidden piece is a chance node: take the expectation, Star1-style pruning.
      */
     function moveValue(state, m, alpha, beta, child) {
       const outs = outcomes(state, J, m);
@@ -84,14 +84,14 @@
         const pr = o.prob;
         const a = Math.max(L, (alpha - sum - (rem - pr) * U) / pr);
         const b = Math.min(U, (beta - sum - (rem - pr) * L) / pr);
-        if (a >= U) return sum + rem * U;   // dù kết cục này tốt nhất cũng không vượt alpha
-        if (b <= L) return sum + rem * L;   // dù kết cục này tệ nhất vẫn vượt beta
+        if (a >= U) return sum + rem * U;   // even its best case cannot beat alpha
+        if (b <= L) return sum + rem * L;   // even its worst case still beats beta
         const next = J.makeMove(state, m, { ...o.opts, fast: true });
         let v = -child(next, -b, -a);
         v = v > U ? U : v < L ? L : v;
         sum += pr * v; rem -= pr;
-        if (v <= a) return sum + rem * U;   // fail-low: cận trên <= alpha
-        if (v >= b) return sum + rem * L;   // fail-high: cận dưới >= beta
+        if (v <= a) return sum + rem * U;   // fail-low: upper bound <= alpha
+        if (v >= b) return sum + rem * L;   // fail-high: lower bound >= beta
       }
       return sum;
     }
@@ -101,7 +101,7 @@
       if (state.quietPlies >= 120) return 0;
       const inCheck = J.isInCheck(state);
       let best, moves;
-      // chỉ xét đủ nước thoát chiếu ở vài nửa nước đầu (chuỗi chiếu liên tục sẽ làm bùng nổ cây)
+      // only consider all check evasions in the first few plies (long chains of checks would blow up the tree)
       const evasion = inCheck && qply < p.qCheckPly;
       if (evasion) {
         moves = J.getLegalMoves(state);
@@ -118,9 +118,9 @@
       const child = (next, a, b) => qsearch(next, a, b, ply + 1, qply + 1);
       for (const m of moves) {
         if (!evasion) {
-          // quân úp chỉ được ăn ở qply đầu (mỗi lần lật tách 6 nhánh – tránh bùng nổ)
+          // hidden pieces may only capture at the first qply (each reveal splits into 6 branches – avoid blow-up)
           if (qply >= p.qHiddenPly && state.board[m.from].hidden) continue;
-          // delta pruning: ăn được quân này cũng không đủ vượt alpha
+          // delta pruning: even winning this piece cannot raise the score above alpha
           const victim = state.board[m.to];
           const gain = victim.hidden ? HIDDEN_ORDER_VALUE : ORDER_VALUE[victim.type];
           if (best + gain + p.deltaMargin < alpha) continue;
@@ -138,7 +138,7 @@
       checkTime();
       if (state.quietPlies >= 120) return 0;
       const moves = J.getLegalMoves(state);
-      if (!moves.length) return -(WIN - ply);       // bị chiếu bí / hết nước = thua
+      if (!moves.length) return -(WIN - ply);       // checkmated / no moves = loss
       orderMoves(state, moves);
       const child = (next, a, b) => search(next, depth - 1, a, b, ply + 1);
       let best = -INF;
@@ -154,7 +154,7 @@
       return best;
     }
 
-    /** Đào sâu dần. Trả về { move, score, depth, nodes }. */
+    /** Iterative deepening. Returns { move, score, depth, nodes }. */
     function think(state, timeMs) {
       const t0 = ctx.now();
       deadline = p.depth > 0 ? Infinity : t0 + timeMs;
@@ -176,15 +176,15 @@
           }
         } catch (e) {
           if (e !== TIMEOUT) throw e;
-          // nước tốt nhất cũ được tìm đầu tiên; nước nào đã vượt nó ở độ sâu mới thì dùng được
+          // the previous best move is searched first; a move that already beat it at the new depth can be used
           if (iterBest && searched > 1 && iterBest !== best.move) best = { move: iterBest, score: iterScore, depth: depth - 1, partial: true };
           break;
         }
         best = { move: iterBest, score: iterScore, depth };
-        // nước tốt lên đầu cho vòng sau
+        // best move first for the next iteration
         rootMoves.sort((a, b) => (b === iterBest) - (a === iterBest) || b._s - a._s);
-        if (Math.abs(iterScore) > MATE_ZONE) break;                 // đã thấy chiếu bí
-        if (p.depth <= 0 && ctx.now() - t0 > timeMs * 0.45) break;  // vòng sau khó kịp xong
+        if (Math.abs(iterScore) > MATE_ZONE) break;                 // mate found
+        if (p.depth <= 0 && ctx.now() - t0 > timeMs * 0.45) break;  // next iteration unlikely to finish
       }
       return { ...best, nodes };
     }
@@ -202,7 +202,7 @@
   Bots.register({
     id: 'search-v3',
     name: 'Bot tìm kiếm (bước 3)',
-    hidden: true, // chỉ dùng làm đối thủ tham chiếu trong đấu trường, không hiện trong UI
+    hidden: true, // only a reference opponent for the arena, not shown in the UI
     description: '[Tham chiếu] Bản bước 3, giữ lại để đo tiến bộ. Nhìn trước nhiều nước (alpha-beta + kỳ vọng khi lật quân + tìm tiếp khi đổi quân), đào sâu dần theo thời gian.',
     params: {
       depth: 0, maxDepth: 30, maxTimeMs: 2000, timeScale: 1,
@@ -212,7 +212,7 @@
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
       const p = { ...ctx.params };
-      for (const k of ['opening', 'middlegame', 'endgame']) {           // cho phép 'phaseTime.middlegame=2'
+      for (const k of ['opening', 'middlegame', 'endgame']) {           // allow 'phaseTime.middlegame=2'
         if (p[`phaseTime.${k}`] != null) p.phaseTime = { ...p.phaseTime, [k]: p[`phaseTime.${k}`] };
       }
       const c = { ...ctx, params: p };
@@ -224,7 +224,7 @@
     },
   });
 
-  // ── Các phong cách dùng chung thuật toán ──
+  // ── Styles sharing the same algorithm ──
   if (0) Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
     description: 'Như Bot tìm kiếm nhưng chỉ nghĩ tối đa 0,3 giây mỗi nước.',

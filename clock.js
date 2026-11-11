@@ -1,11 +1,11 @@
 /*
- * Đồng hồ cờ 2 bên (Fischer increment). Không phụ thuộc DOM hay engine.
+ * Two-sided chess clock (Fischer increment). No dependency on the DOM or the engine.
  *
  *   const clock = new ChessClock({ initialMs: 5 * 60e3, incrementMs: 3e3, onTick, onTimeout });
- *   clock.start('r');          // bắt đầu chạy giờ của Đỏ
- *   clock.press('r');          // Đỏ vừa đi xong: cộng increment cho Đỏ, chuyển sang giờ của Đen
+ *   clock.start('r');          // start Red's clock
+ *   clock.press('r');          // Red just moved: add the increment to Red, switch to Black's clock
  *   clock.pause(); clock.resume();
- *   clock.snapshot() / clock.restore(snap)   // dùng khi đi lại (undo)
+ *   clock.snapshot() / clock.restore(snap)   // used for undo
  */
 (function (root) {
   'use strict';
@@ -19,9 +19,9 @@
       this.onTick = onTick;
       this.onTimeout = onTimeout;
       this.remaining = { r: initialMs, b: initialMs };
-      this.active = null;   // bên đang chạy giờ
+      this.active = null;   // side whose clock is running
       this.paused = false;
-      this.flagged = null;  // bên đã hết giờ
+      this.flagged = null;  // side that ran out of time
       this._last = 0;
       this._timer = null;
     }
@@ -40,7 +40,7 @@
     press(side) {
       if (!this.enabled || this.flagged) return;
       this._update();
-      if (this.active === side) this.remaining[side] += this.incrementMs; // nước đầu (đồng hồ chưa chạy) không cộng
+      if (this.active === side) this.remaining[side] += this.incrementMs; // no increment for the first move (clock not running yet)
       this.start(side === 'r' ? 'b' : 'r');
     }
 

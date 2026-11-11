@@ -1,4 +1,4 @@
-// Node: nạp registry + toàn bộ bot trong manifest. Dùng: const JieqiBots = require('./bots');
+// Node: loads the registry + every bot in the manifest. Usage: const JieqiBots = require('./bots');
 const path = require('path');
 require('./registry');
 for (const f of require('./manifest')) require(path.join(__dirname, f));

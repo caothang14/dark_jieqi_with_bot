@@ -7,8 +7,8 @@
     name: 'Bot tham ăn',
     description: 'Ăn quân giá trị nhất có thể (theo bảng giá trị quân), ưu tiên lật quân, không nhìn trước nước đối thủ.',
     params: {
-      revealBonus: 0.3,     // điểm cộng cho nước lật quân úp
-      drawThreshold: 0,     // nhận hoà khi chênh lệch quân <= ngưỡng này
+      revealBonus: 0.3,     // bonus for a move that reveals a hidden piece
+      drawThreshold: 0,     // accept a draw when the material difference is <= this threshold
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -16,7 +16,7 @@
       const moves = J.getLegalMoves(state);
       let best = null, bestScore = -Infinity;
       for (const m of moves) {
-        let score = ctx.random() * 0.1; // phá thế hoà điểm
+        let score = ctx.random() * 0.1; // tie-breaker
         if (state.board[m.to]) score += E.pieceValue(state, J, m.to, w, phase);
         if (state.board[m.from].hidden) score += ctx.params.revealBonus;
         if (score > bestScore) { bestScore = score; best = m; }

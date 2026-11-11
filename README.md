@@ -1,141 +1,143 @@
 # Cờ Tướng Úp (Jieqi / 揭棋)
 
-Bàn cờ tướng úp chơi trên máy local. HTML/CSS/JS thuần, không cần build, không cần server.
+A local Jieqi (face-down Chinese chess) board. Plain HTML/CSS/JS – no build step, no server. The UI is in Vietnamese.
 
-## Chạy
+## Running
 
-Mở `index.html` bằng trình duyệt (double-click là được).
+Open `index.html` in a browser (double-clicking it is enough).
 
-Test engine (cần Node.js):
+Engine tests (requires Node.js):
 
 ```bash
 npm test
 ```
 
-## Luật đã cài
+## Rules implemented
 
-- Hai Tướng ngửa, 15 quân còn lại mỗi bên úp ở vị trí chuẩn.
-- Quân úp đi theo luật của quân gốc ở ô đó (úp ở ô Xe thì đi như Xe, Sĩ úp chỉ đi trong cung, Tượng úp không qua sông).
-- Đi xong thì quân được lật; danh tính rút ngẫu nhiên từ "túi" quân còn úp của bên đó.
-- Sĩ/Tượng đã lật được đi khắp bàn (Sĩ đi chéo 1 ô, Tượng đi chéo 2 ô, vẫn bị chặn mắt).
-- Ăn quân úp thì lộ ra quân đó là gì.
-- Có luật lộ mặt tướng, không được tự đi vào thế bị chiếu, hết nước đi là thua.
-- Hoà khi 60 hiệp (120 nửa nước) liên tiếp không bên nào ăn quân hay lật quân (自然限着).
-- Lặp nước theo **luật Trung Quốc** (xem dưới).
+- Both Kings start face-up; each side's other 15 pieces start face-down on the standard squares.
+- A face-down piece moves like the original piece of its square (face-down on a Rook square moves like a Rook; a hidden Advisor stays in the palace; a hidden Elephant does not cross the river).
+- After it moves, the piece is revealed; its identity is drawn at random from that side's "bag" of remaining hidden pieces.
+- A revealed Advisor/Elephant may move anywhere on the board (Advisor 1 step diagonally, Elephant 2 steps diagonally, still blocked by its "eye").
+- Capturing a hidden piece reveals what it was.
+- Flying-general rule, no moving into check, no legal moves = loss.
+- Draw after 60 moves (120 plies) in a row with no capture and no reveal by either side (自然限着).
+- Repetition follows the **Chinese rules** (see below).
 
-### Lặp nước (luật Trung Quốc – 中国象棋竞赛规则)
+### Repetition (Chinese rules – 中国象棋竞赛规则)
 
-Khi một thế cờ xuất hiện **lần thứ 3** (cùng vị trí quân, cùng lượt đi), engine xét các nước của mỗi bên trong vòng lặp:
+When a position occurs **for the 3rd time** (same piece placement, same side to move), the engine classifies each side's moves within the cycle:
 
-| Loại nước | Nghĩa |
+| Move kind | Meaning |
 |---|---|
-| Chiếu (将) | Chiếu Tướng |
-| Doạ bí (杀) | Nếu đối phương bỏ lượt thì có nước chiếu bí ngay |
-| Bắt (捉) | Tạo mới một nước ăn quân **có lợi**: quân bị bắt không có căn thật (không ăn lại được), hoặc đáng giá hơn quân bắt (vd Mã/Pháo bắt Xe dù Xe có căn) |
-| Nhàn (闲) | Mọi nước khác: đề nghị đổi quân (兑), hiến, chặn, đi theo… |
+| Check (将) | Gives check |
+| Mate threat (杀) | If the opponent passed, there would be an immediate checkmate |
+| Chase (捉) | Creates a new **profitable** capture: the target has no real defender (cannot be recaptured), or is worth more than the attacker (e.g. Horse/Cannon attacking a Rook even if the Rook is defended) |
+| Idle (闲) | Every other move: offering a trade (兑), sacrificing, blocking, following… |
 
-Không tính là bắt: Tướng hoặc Tốt đi bắt quân; bắt Tốt chưa qua sông; bắt quân có căn thật cùng giá trị (= đổi quân).
+Not a chase: the King or a Pawn doing the attacking; attacking a Pawn that has not crossed the river; attacking a truly defended piece of equal value (= a trade offer).
 
-**Phạm luật (禁止着法)**: một bên mà *mọi* nước trong vòng lặp đều là chiếu / doạ bí / bắt, không có nước nhàn nào – gồm chiếu dai (长将), doạ bí dai (长杀), đuổi bắt dai (长捉), và các kiểu xen kẽ 一将一捉, 一将一杀, 一杀一捉 (luật châu Á chỉ cấm chiếu dai và đuổi bắt dai; luật Trung Quốc cấm cả các kiểu xen kẽ).
-**Được phép**: có xen ít nhất một nước nhàn (一将一闲, 数将一闲, 一捉一闲…).
+**Violation (禁止着法)**: a side whose *every* move in the cycle is a check / mate threat / chase, with no idle move – this includes perpetual check (长将), perpetual mate threat (长杀), perpetual chase (长捉), and the alternating forms 一将一捉, 一将一杀, 一杀一捉 (Asian rules only forbid perpetual check and perpetual chase; Chinese rules also forbid the alternating forms).
+**Allowed**: at least one idle move in between (一将一闲, 数将一闲, 一捉一闲…).
 
-**Phân xử – bắt đổi nước**: chiếu dai là vi phạm nặng nhất. Bên vi phạm nặng hơn là bên phạm luật: nước nào của bên đó làm thế cờ xuất hiện lần thứ 3 thì **không được đi** (`getLegalMoves` tự loại, `makeMove` báo `Illegal move`) – phải đổi nước. Nếu bên phạm luật không còn nước nào khác thì **thua**. Hai bên vi phạm ngang nhau hoặc không ai vi phạm → lặp lần thứ 3 thì **hoà**. Vd: một bên chiếu dai, bên kia chạy Tướng nhưng vẫn giữ thế doạ bí → bên chiếu dai phải đổi nước.
+**Ruling – must deviate**: perpetual check is the most serious violation. The side with the more serious violation is the violator: any of its moves that would make the position occur for the 3rd time is **not allowed** (`getLegalMoves` filters it out, `makeMove` throws `Illegal move`) – it must play something else. If the violator has no other move, it **loses**. Equal violations or no violation → the 3rd occurrence is a **draw**. Example: one side checks perpetually while the other runs with its King but keeps a mate threat → the checking side must deviate.
 
-Trên UI: lặp lần 2 thì cảnh báo bên đang phạm luật; nước bị cấm hiện dấu ✕ đỏ, bấm vào để xem lý do. Bot tìm kiếm hiểu luật này và tự tránh chiếu dai/đuổi dai khi mình là bên phạm luật (kể cả trước khi bị cấm hẳn). Các nước bị cấm và lý do: `Jieqi.forbiddenMoves(state)`.
+In the UI: on the 2nd occurrence the violating side gets a warning; forbidden moves are marked with a red ✕ – click it to see why. The search bot understands these rules and avoids perpetual check/chase on its own when it is the violator (even before the move is outright forbidden). Forbidden moves and their reasons: `Jieqi.forbiddenMoves(state)`.
 
-Tuỳ chỉnh khi tạo ván: `Jieqi.createGame({ rules: { repetition: 'chinese' | 'none', repetitionCount: 3, naturalLimit: 120 } })`. Phân tích một thế cờ lặp: `Jieqi.repetitionStatus(state)`.
+Configure when creating a game: `Jieqi.createGame({ rules: { repetition: 'chinese' | 'none', repetitionCount: 3, naturalLimit: 120 } })`. Analyse a repeated position: `Jieqi.repetitionStatus(state)`.
 
-Đơn giản hoá so với luật đầy đủ (có thể bổ sung sau): chưa xét ngoại lệ "ăn quân xong bị chiếu bí ngay thì không tính là bắt"; quân úp bị bắt được coi giá trị 3; nước doạ bí không xét quân úp.
+Simplifications compared with the full rules (may be added later): the exception "a capture that is immediately followed by being checkmated is not a chase" is not handled; a captured hidden piece is valued at 3; mate threats ignore hidden pieces.
 
-## Đồng hồ
+## Clock
 
-- Chọn thời gian ở mục "Thời gian": không tính giờ, 3+2, 5, 10, 10+5, 15+10, 30 phút, hoặc tuỳ chỉnh (phút + giây cộng mỗi nước).
-- Đồng hồ bắt đầu chạy sau nước đầu tiên của Đỏ. Đi xong một nước thì được cộng thêm giây (nếu có) và chuyển giờ sang đối thủ.
-- Hết giờ thì thua. Dưới 10 giây đồng hồ chuyển đỏ và hiện phần mười giây.
-- "Tạm dừng" (hoặc phím Space) dừng giờ và khoá bàn cờ. "Đi lại" trả thời gian về đúng lúc trước nước đó.
-- Đổi thời gian giữa ván thì áp dụng từ ván mới.
-- Logic đồng hồ nằm riêng trong `clock.js` (class `ChessClock`), dùng lại được cho bot (ví dụ bot tự chia thời gian suy nghĩ).
+- Choose the time control under "Thời gian" (Time): untimed, 3+2, 5, 10, 10+5, 15+10, 30 minutes, or custom (minutes + seconds added per move).
+- The clock starts after Red's first move. After each move the increment (if any) is added and the clock switches to the opponent.
+- Running out of time loses. Under 10 seconds the clock turns red and shows tenths of a second.
+- "Tạm dừng" (Pause, or the Space key) stops the clock and locks the board. "Đi lại" (Undo) restores the time to exactly what it was before that move.
+- Changing the time control mid-game takes effect from the next game.
+- The clock logic lives in `clock.js` (class `ChessClock`) and can be reused by bots (e.g. for a bot to budget its thinking time).
 
-## Kết thúc ván
+## Ending a game
 
-- **Chịu thua**: chơi 2 người thì bên đang tới lượt chịu thua; đấu bot thì người chơi chịu thua. Có bước xác nhận.
-- **Cầu hoà**: chơi 2 người thì bên kia bấm Đồng ý / Từ chối; đấu bot thì bot tự quyết qua hàm `acceptDraw` (bot tham ăn đồng ý khi đang kém hoặc ngang quân).
-- **Lật hết quân úp**: hiện sau khi hết ván; quân lật thêm có viền cam. Engine có hàm `Jieqi.revealAll(state)`.
-- Bấm "Đi lại" ngay sau khi chịu thua / hoà / hết giờ sẽ huỷ kết quả đó và chơi tiếp.
+- **Resign** ("Chịu thua"): with 2 humans the side to move resigns; against a bot the human resigns. Requires confirmation.
+- **Offer a draw** ("Cầu hoà"): with 2 humans the other side clicks Accept / Decline; against a bot the bot decides via its `acceptDraw` function (the greedy bot accepts when it is behind or level in material).
+- **Reveal all hidden pieces** ("Lật hết quân úp"): shown after the game ends; pieces revealed this way get an orange outline. The engine provides `Jieqi.revealAll(state)`.
+- Clicking "Đi lại" (Undo) right after a resignation / draw / timeout cancels that result and play continues.
 
-> Nếu luật bạn hay chơi khác (ví dụ Sĩ/Tượng lật rồi vẫn bị giới hạn), sửa hàm `pseudoTargets` trong `engine.js`.
+> If the rules you usually play differ (e.g. revealed Advisors/Elephants stay restricted), change `pseudoTargets` in `engine.js`.
 
-## Cấu trúc
+## Structure
 
-| File | Vai trò |
+| File | Role |
 |---|---|
-| `engine.js` | Luật chơi, không đụng DOM. Dùng được cả trong browser (`window.Jieqi`) lẫn Node (`require('./engine')`) |
-| `clock.js` | Đồng hồ 2 bên (có cộng giây mỗi nước, tạm dừng, lưu/khôi phục khi đi lại) |
-| `ui.js` | Vẽ bàn cờ, xử lý click, đi lại (undo), biên bản; chọn Người/bot cho từng bên |
-| `bots/registry.js` | Nơi đăng ký bot + giao diện chung (`JieqiBots`) |
-| `bots/manifest.js` | Danh sách file bot – **thêm bot mới chỉ cần sửa file này** |
-| `bots/lib/common.js` | Helper dùng chung (giá trị quân đơn giản, chọn ngẫu nhiên…) |
-| `bots/lib/eval.js` | Hàm đánh giá thế cờ (giá trị quân theo giai đoạn, cơ động, chiếu) |
-| `bots/lib/opening.js` | Thứ tự ưu tiên khi lật quân úp |
-| `bots/random.js`, `bots/greedy.js`, `bots/eval1.js`, `bots/search.js` | Các bot: ngẫu nhiên, tham ăn, đánh giá 1 nước, tìm kiếm nhiều nước |
-| `bots/index.js` | Nạp toàn bộ bot trong Node |
-| `arena/match.js` | Chơi 1 ván bot vs bot, replay ván từ record |
-| `arena/arena.js` | Đấu trường: chạy song song nhiều ván, thống kê Elo |
-| `arena/bench.js` | Đo tốc độ engine/bot, perft để phát hiện thay đổi luật |
-| `test/` | Test luật (kể cả lặp nước), bot, đấu trường (`npm test`) |
+| `engine.js` | Game rules, no DOM. Works in the browser (`window.Jieqi`) and in Node (`require('./engine')`) |
+| `clock.js` | Two-sided clock (increment per move, pause, save/restore on undo) |
+| `ui.js` | Draws the board, handles clicks, undo, move list; Human/bot selection for each side |
+| `bots/registry.js` | Bot registration + the shared interface (`JieqiBots`) |
+| `bots/manifest.js` | List of bot files – **adding a bot only requires editing this file** |
+| `bots/lib/common.js` | Shared helpers (simple piece values, random pick…) |
+| `bots/lib/eval.js` | Position evaluation (phase-dependent piece values, mobility, check) |
+| `bots/lib/opening.js` | Priority order for revealing hidden pieces |
+| `bots/random.js`, `bots/greedy.js`, `bots/eval1.js`, `bots/search.js` | Bots: random, greedy, 1-ply evaluation, multi-ply search |
+| `bots/index.js` | Loads every bot in Node |
+| `arena/match.js` | Plays one bot-vs-bot game, replays a game from a record |
+| `arena/arena.js` | Arena: runs many games in parallel, Elo statistics |
+| `arena/bench.js` | Engine/bot benchmarks, perft to catch rule changes |
+| `test/` | Tests for the rules (including repetition), bots, arena (`npm test`) |
 
-## API engine (để viết bot)
+## Engine API (for writing bots)
 
 ```js
-const s0 = Jieqi.createGame({ seed: 123 });   // seed cố định => ván tái lập được
-Jieqi.getLegalMoves(s)                         // [{from, to}], ô = y*9 + x
-Jieqi.makeMove(s, move)                        // trả về state MỚI (immutable)
-Jieqi.makeMove(s, move, { revealAs: 'R' })     // ép quân lật ra là Xe (cho expectimax)
-Jieqi.makeMove(s, move, { captureAs: 'C' })    // ép quân úp bị ăn là Pháo
-Jieqi.makeMove(s, move, { fast: true })        // bỏ kiểm tra hợp lệ/kết quả, cho search nhanh
-Jieqi.revealProbabilities(s, 'b')              // { R: 0.2, C: 0.13, ... } xác suất lật ra
-Jieqi.revealAll(s)                             // lật hết quân úp (chỉ để xem khi hết ván)
+const s0 = Jieqi.createGame({ seed: 123 });   // fixed seed => reproducible game
+Jieqi.getLegalMoves(s)                         // [{from, to}], square = y*9 + x
+Jieqi.makeMove(s, move)                        // returns a NEW state (immutable)
+Jieqi.makeMove(s, move, { revealAs: 'R' })     // force the revealed piece to be a Rook (for expectimax)
+Jieqi.makeMove(s, move, { captureAs: 'C' })    // force the captured hidden piece to be a Cannon
+Jieqi.makeMove(s, move, { fast: true })        // skip legality/result checks, for fast search
+Jieqi.revealProbabilities(s, 'b')              // { R: 0.2, C: 0.13, ... } reveal probabilities
+Jieqi.revealAll(s)                             // reveal every hidden piece (only for viewing after the game)
 Jieqi.isInCheck(s), s.result, s.turn, s.board, s.pools
 ```
 
-Mỗi quân: `{ side: 'r'|'b', type, hidden, role }`. `role` = loại quân của ô xuất phát (cách quân úp di chuyển); `type` = quân thật, `null` khi còn úp.
+Each piece: `{ side: 'r'|'b', type, hidden, role }`. `role` = the piece type of its starting square (how a hidden piece moves); `type` = the real piece, `null` while hidden.
 
-## Viết bot
+Piece codes: K King (Tướng), A Advisor (Sĩ), E Elephant (Tượng), H Horse (Mã), R Rook (Xe), C Cannon (Pháo), P Pawn (Tốt).
 
-1. Tạo file `bots/<ten-bot>.js`:
+## Writing a bot
+
+1. Create `bots/<bot-name>.js`:
 
 ```js
 (function (root) {
   const { VALUE, materialDiff } = root.JieqiBots.lib.common;
   root.JieqiBots.register({
     id: 'my-bot',
-    name: 'Bot của tôi',
-    description: 'Mô tả ngắn, hiện trong UI',
-    params: { depth: 2 },                       // tham số mặc định, ghi đè được
-    chooseMove(state, J, ctx) {                 // có thể async
+    name: 'Bot của tôi',                        // display name (the UI is in Vietnamese)
+    description: 'Mô tả ngắn, hiện trong UI',   // short description shown in the UI
+    params: { depth: 2 },                       // default params, overridable
+    chooseMove(state, J, ctx) {                 // may be async
       const moves = J.getLegalMoves(state);
-      return { move: moves[0], info: { score: 0, depth: ctx.params.depth } };   // hoặc chỉ trả về moves[0]
+      return { move: moves[0], info: { score: 0, depth: ctx.params.depth } };   // or just return moves[0]
     },
-    acceptDraw(state, J, ctx) {                 // tuỳ chọn
+    acceptDraw(state, J, ctx) {                 // optional
       return materialDiff(state, J, ctx.side) < 0;
     },
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
 ```
 
-2. Thêm `'<ten-bot>.js'` vào `bots/manifest.js`. Bot tự xuất hiện trong UI (ô chọn Đỏ/Đen) và trong đấu trường.
+2. Add `'<bot-name>.js'` to `bots/manifest.js`. The bot then shows up in the UI (Red/Black selectors) and in the arena.
 
-`ctx` bot nhận được: `side`, `ply`, `params`, `random()` (có seed trong đấu trường – đừng dùng `Math.random`), `now()`, `timeBudgetMs`, `deadline`, `clock` (`{ myTimeMs, oppTimeMs, incrementMs }` hoặc `null`), `history`. Chi tiết ở đầu `bots/registry.js`.
+The `ctx` a bot receives: `side`, `ply`, `params`, `random()` (seeded in the arena – do not use `Math.random`), `now()`, `timeBudgetMs`, `deadline`, `clock` (`{ myTimeMs, oppTimeMs, incrementMs }` or `null`), `history`. Details at the top of `bots/registry.js`.
 
-**Nhiều phong cách từ 1 thuật toán**: dùng biến thể thay vì copy code.
+**Several styles from one algorithm**: use variants instead of copying code.
 
 ```js
 JieqiBots.variant('my-bot', { id: 'my-bot-endgame', name: 'Bot ưu tiên tàn cuộc', params: { endgameWeight: 2 } });
 ```
 
-hoặc chọn nhanh khi chạy đấu trường: `--a my-bot:depth=3,endgameWeight=2`.
+or pick one quickly when running the arena: `--a my-bot:depth=3,endgameWeight=2`.
 
-**Service bot sau này**: bot chỉ cần `chooseMove` trả về Promise, nên một bot gọi service là một file nhỏ:
+**A bot service later on**: a bot only needs `chooseMove` to return a Promise, so a bot that calls a service is a small file:
 
 ```js
 chooseMove: async (state, J, ctx) => {
@@ -144,25 +146,25 @@ chooseMove: async (state, J, ctx) => {
 }
 ```
 
-State là JSON thuần, gửi thẳng được. Đấu trường cũng gọi được bot kiểu này.
+The state is plain JSON and can be sent as is. The arena can call such bots too.
 
-## Hàm đánh giá thế cờ (`bots/lib/eval.js`)
+## Position evaluation (`bots/lib/eval.js`)
 
-Điểm = **giá trị quân** + **cơ động** (0.02 × chênh lệch số nước đi) + **chiếu** (±0.3). Thắng/thua = ±1000.
+Score = **material** + **mobility** (0.02 × difference in number of moves) + **check** (±0.3). Win/loss = ±1000.
 
-| Quân | Giá trị |
+| Piece | Value |
 |---|---|
-| Tốt | -1 ở tâm cung của mình (vướng Tướng – đối phương không nên ăn), 1 chưa qua sông, 2 đã qua sông, 0.5 khi lụt (hàng cuối đối phương) |
-| Tượng | 1 |
-| Sĩ | 2; 3 khi có Sĩ giao nhau (2 Sĩ chéo cạnh nhau, bảo vệ nhau) |
-| Mã | 3 khai cuộc · 4 trung cuộc · 5 tàn cuộc |
-| Pháo | 5 khai cuộc · 4 trung cuộc · 3 tàn cuộc |
-| Xe | 9.5 khai cuộc · 9 trung cuộc · 10 tàn cuộc |
-| Quân úp | trung bình theo xác suất lật ra, mỗi khả năng chấm như đã lật tại ô đang đứng |
+| Pawn | -1 on its own palace centre (blocks the King – the opponent should not capture it), 1 before crossing the river, 2 after crossing, 0.5 when bottomed out (opponent's last rank) |
+| Elephant | 1 |
+| Advisor | 2; 3 when paired (2 Advisors diagonally adjacent, protecting each other) |
+| Horse | 3 opening · 4 middlegame · 5 endgame |
+| Cannon | 5 opening · 4 middlegame · 3 endgame |
+| Rook | 9.5 opening · 9 middlegame · 10 endgame |
+| Hidden piece | average over the reveal probabilities, each possibility scored as if revealed on its current square |
 
-Giai đoạn theo số quân còn trên bàn / 32 (tính cả Tướng và quân úp): > 90% (≥ 29 quân) khai cuộc, > 50% (17–28) trung cuộc, còn lại tàn cuộc.
+Game phase by the number of pieces left on the board / 32 (Kings and hidden pieces included): > 90% (≥ 29 pieces) opening, > 50% (17–28) middlegame, otherwise endgame.
 
-Mọi hệ số đều ghi đè được, không cần sửa code:
+Every coefficient can be overridden without touching the code:
 
 ```bash
 npm run arena -- --a eval-1ply:R.endgame=11,mobility=0 --b eval-1ply
@@ -172,97 +174,97 @@ npm run arena -- --a eval-1ply:R.endgame=11,mobility=0 --b eval-1ply
 JieqiBots.variant('eval-1ply', { id: 'tan-cuoc', name: 'Ưu tiên tàn cuộc', params: { 'H.endgame': 6, 'P.crossed': 2.5 } });
 ```
 
-Trong UI, bật "Hiện đánh giá thế cờ" để xem điểm (góc nhìn Đỏ), giai đoạn và giá trị từng quân ngay trên bàn cờ.
+In the UI, tick "Hiện đánh giá thế cờ" (Show evaluation) to see the score (from Red's point of view), the game phase and each piece's value right on the board.
 
-Bot dùng hàm này: `eval-1ply` (đầy đủ) và `material-1ply` (chỉ tính quân). Cả hai đều mới nhìn 1 nước nên chỉ ngang bot tham ăn (~54%) – hàm đánh giá chỉ phát huy khi có tìm kiếm nhiều nước (bước 3).
+Bots using this function: `eval-1ply` (full) and `material-1ply` (material only). Both only look 1 ply ahead, so they are only on par with the greedy bot (~54%) – the evaluation only pays off with a multi-ply search (step 3).
 
-## Bot tìm kiếm (`bots/search.js`)
+## Search bot (`bots/search.js`)
 
-Nhìn trước nhiều nước:
+Looks several moves ahead:
 
-- **Alpha-beta (negamax)**: thử nước của mình, nước đáp của đối thủ…, cắt các nhánh chắc chắn kém.
-- **Nút may rủi khi lật quân** (expectimax): nước lật quân được tính bằng trung bình theo xác suất từng loại quân lật ra. Cắt nhánh kiểu **Star2**: thăm dò rẻ trước để có cận trên cho từng kết cục (ở quiescence chính là điểm đứng yên của đối thủ), nếu tổng có trọng số đã kém hơn nước tốt nhất thì bỏ luôn, không cần tìm kỹ. Kết quả *giống hệt* khi không thăm dò (có test), nhưng ít nút hơn ~14 lần.
-- Ăn quân úp thì *không* tách nhánh: bàn cờ sau khi ăn giống nhau với mọi danh tính, giữ nguyên pool cho đúng xác suất kỳ vọng (`makeMove(..., { captureUnknown: true })`).
-- **Quiescence**: hết độ sâu mà còn nước ăn quân thì tìm tiếp các nước ăn; đang bị chiếu thì xét đủ nước thoát chiếu (2 nửa nước đầu). Quân úp chỉ được ăn ở nửa nước đầu, kèm delta pruning.
-- **Bảng ghi nhớ** (Zobrist hash, tính cả pool quân úp): dùng lại kết quả thế cờ đã tính, thử nước tốt nhất cũ trước.
-- **Sắp xếp nước**: nước tốt nhất từ bảng ghi nhớ → ăn quân (MVV-LVA) → nước sát thủ (killer) → history.
-- **LMR**: nước thường xếp sau được tìm nông hơn 1 nước; tốt bất ngờ thì tìm lại đủ sâu. **Null move** từ độ sâu 3.
-- **Đào sâu dần** theo thời gian; hết giờ giữa chừng vẫn dùng được kết quả của vòng trước.
+- **Alpha-beta (negamax)**: tries our moves, the opponent's replies…, and prunes branches that are certainly worse.
+- **Chance nodes for reveals** (expectimax): a reveal move is scored as the probability-weighted average over every piece type it may turn out to be. **Star2**-style pruning: a cheap probe first gives an upper bound for each outcome (in quiescence this is simply the opponent's stand-pat score); if the weighted total is already worse than the best move, the move is dropped without a full search. The result is *exactly the same* as without probing (there is a test), with ~14× fewer nodes.
+- Capturing a hidden piece does *not* split: the board after the capture is the same for every identity, and leaving the pool unchanged keeps the expected probabilities exact (`makeMove(..., { captureUnknown: true })`).
+- **Quiescence**: at the depth limit, keep searching captures; when in check, consider every evasion (first 2 plies). Hidden pieces may only capture at the first ply, plus delta pruning.
+- **Transposition table** (Zobrist hash, including the hidden pools): reuses results of positions already searched and tries the previous best move first.
+- **Move ordering**: best move from the transposition table → captures (MVV-LVA) → killer moves → history.
+- **LMR**: later quiet moves are searched 1 ply shallower and re-searched at full depth if they turn out better. **Null move** from depth 3.
+- **Iterative deepening** on time; when time runs out mid-iteration, the previous iteration's result is still usable.
 
-| Bot | Phong cách |
+| Bot | Style |
 |---|---|
-| `search` | Bot tìm kiếm – tối đa 2 giây/nước |
-| `search-fast` | Tối đa 0,3 giây/nước |
-| `search-midgame` | Đi nhanh khai cuộc, dành gấp 2,5 lần thời gian cho trung cuộc |
-| `search-endgame` | Đánh giá cao Mã/Xe/Tốt qua sông ở tàn cuộc, nghĩ lâu hơn khi vào tàn cuộc |
-| `search-v3`, `search-v4` | Bản bước 3 / bước 4 (trước khi có ưu tiên lật quân), ẩn khỏi UI – chỉ để làm mốc so sánh |
+| `search` | Search bot – at most 2 seconds/move |
+| `search-fast` | At most 0.3 seconds/move |
+| `search-midgame` | Plays fast in the opening, spends 2.5× as much time in the middlegame |
+| `search-endgame` | Values Horse/Rook/crossed Pawns higher in the endgame, thinks longer once in the endgame |
+| `search-v3`, `search-v4` | Step-3 / step-4 versions (before reveal priorities), hidden from the UI – reference points only |
 
-Tham số: `depth` (cố định độ sâu – tái lập được), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, `probe`, `tt`, `lmr`, `nullMove`, `pvs`… cùng mọi trọng số của hàm đánh giá. Ví dụ: `--a search:depth=3`, `--a search:lmr=false --b search`.
+Params: `depth` (fixed depth – reproducible), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, `probe`, `tt`, `lmr`, `nullMove`, `pvs`… plus every evaluation weight. Examples: `--a search:depth=3`, `--a search:lmr=false --b search`.
 
-### Ưu tiên khi lật quân (`bots/lib/opening.js`)
+### Reveal priorities (`bots/lib/opening.js`)
 
-Thứ tự nên lật quân úp theo kinh nghiệm người chơi, áp dụng suốt lúc còn quân úp:
+The order in which hidden pieces should be revealed, from player experience, applied as long as hidden pieces remain:
 
-1. Tốt úp cột biên (a, i) → 2. Tốt úp cột 3, 7 → 3. Tốt úp cột giữa → 4. Sĩ úp vào tâm cung, Tượng úp vào giữa → 5. Mã úp → 6. Tượng úp ra biên → 7. Pháo úp tiến thẳng → 8. Pháo úp đi ngang/lùi → 9. Xe úp.
+1. hidden Pawn on an edge file (a, i) → 2. hidden Pawn on file 3, 7 → 3. hidden centre Pawn → 4. hidden Advisor to the palace centre, hidden Elephant to the centre → 5. hidden Horse → 6. hidden Elephant to the edge → 7. hidden Cannon straight forward → 8. hidden Cannon sideways/backwards → 9. hidden Rook.
 
-Bot dùng bảng này theo 2 cách (mặc định bật):
+The bot uses this table in 2 ways (both on by default):
 
-- **Sắp thứ tự** (`openingOrder`): nước lật quân được thử theo thứ tự trên.
-- **Bỏ bớt** (`revealTopKRoot=8`, `revealTopK=4`): ở gốc chỉ xét 8 nước lật đứng đầu bảng, ở các tầng dưới chỉ 4. Nước ăn quân, nước của quân đã lật và khi đang bị chiếu thì luôn xét đủ. "Không lật vào mồm quân địch" do tìm kiếm tự thấy.
+- **Ordering** (`openingOrder`): reveal moves are tried in the order above.
+- **Pruning** (`revealTopKRoot=8`, `revealTopK=4`): at the root only the top 8 reveal moves are considered, 4 at deeper levels. Captures, moves of revealed pieces and positions in check are always fully considered. "Don't reveal into the enemy's mouth" is found by the search itself.
 
-Tuỳ chọn thứ 3, `development` (vd `0.3`): điểm thưởng trong hàm đánh giá cho việc lật đúng thứ tự – mặc định tắt vì không giúp thêm.
+A third option, `development` (e.g. `0.3`): an evaluation bonus for revealing in the right order – off by default because it does not help further.
 
-Kết quả (30 ván mỗi phương án, 0,5 giây/nước, so với bản trước – `search-v4`):
+Results (30 games per option, 0.5 seconds/move, against the previous version – `search-v4`):
 
-| Phương án | Điểm | Elo |
+| Option | Score | Elo |
 |---|---|---|
-| Chỉ sắp thứ tự | 48,3% | ≈ 0 |
-| **Sắp thứ tự + bỏ bớt (mặc định)** | **68,3% (+20 =1 −9)** | **+134** |
-| + điểm thưởng `development=0.3` | 66,7% | +120 |
+| Ordering only | 48.3% | ≈ 0 |
+| **Ordering + pruning (default)** | **68.3% (+20 =1 −9)** | **+134** |
+| + bonus `development=0.3` | 66.7% | +120 |
 
-Thế cờ đầu ván: tìm sâu 3 từ 9 giây xuống 1,5 giây; với 2 giây/nước bot đạt độ sâu 3 ngay từ nước đầu (trước đây là 2).
+Starting position: a depth-3 search went from 9 seconds down to 1.5 seconds; at 2 seconds/move the bot reaches depth 3 from the very first move (previously 2).
 
-### Tiến độ (đo bằng đấu trường, 0,3 giây/nước)
+### Progress (measured in the arena, 0.3 seconds/move)
 
-| Mốc | Kết quả |
+| Milestone | Result |
 |---|---|
-| Bước 3: `search-v3` vs `greedy` | 92,5% (0,5 giây/nước) |
-| Bước 4: `search` vs `search-v3` | **85% (+31 =6 −3), +301 Elo**; độ sâu TB 4,3 so với 2,5 |
-| Bước 4: `search` vs `greedy` | **100% (30/30 ván)** |
+| Step 3: `search-v3` vs `greedy` | 92.5% (0.5 seconds/move) |
+| Step 4: `search` vs `search-v3` | **85% (+31 =6 −3), +301 Elo**; average depth 4.3 vs 2.5 |
+| Step 4: `search` vs `greedy` | **100% (30/30 games)** |
 
-### Tối ưu ở bước 4
+### Optimisations in step 4
 
-| | Trước | Sau |
+| | Before | After |
 |---|---|---|
-| Sinh nước hợp lệ | 110 µs | 11 µs (kiểm tra chiếu dò ngược từ Tướng, đi thử/huỷ ngay trên bàn, không cấp phát bộ nhớ) |
-| Kiểm tra chiếu | 2,9 µs | 0,6 µs |
-| Tìm sâu 2 (6 thế cờ) | 26 giây, 1 triệu nút | 0,9 giây, 71 nghìn nút |
-| Độ sâu trong 0,5 giây | 1–4 | 2–6 |
+| Legal move generation | 110 µs | 11 µs (check detection scans outward from the King, make/unmake in place on the board, no allocation) |
+| Check detection | 2.9 µs | 0.6 µs |
+| Depth-2 search (6 positions) | 26 seconds, 1 million nodes | 0.9 seconds, 71 thousand nodes |
+| Depth reached in 0.5 seconds | 1–4 | 2–6 |
 
-Đo lại: `npm run bench` (hoặc `node arena/bench.js search:lmr=false 1,2,3`). `perft(3)` trong bench phải giữ nguyên sau mỗi lần tối ưu engine – đổi tức là luật đã bị thay đổi ngoài ý muốn.
+Re-measure with `npm run bench` (or `node arena/bench.js search:lmr=false 1,2,3`). `perft(3)` in the bench must stay unchanged after every engine optimisation – a change means the rules were altered by accident.
 
-**Còn hạn chế**: thế cờ đầu ván (hoàn toàn cân bằng, nước nào cũng lật quân) vẫn chỉ đạt độ sâu 2 trong ~1 giây. Bot chạy trên luồng chính nên UI đứng hình trong lúc bot nghĩ (bước 5: Web Worker).
+**Known limitations**: the starting position (perfectly balanced, every move is a reveal) still only reaches depth 2 in ~1 second. Bots run on the main thread, so the UI freezes while a bot is thinking (step 5: Web Worker).
 
-## Đấu trường (bot vs bot)
+## Arena (bot vs bot)
 
 ```bash
-npm run bots                                          # liệt kê bot
-npm run bench                                         # đo tốc độ engine + bot
+npm run bots                                          # list bots
+npm run bench                                         # engine + bot benchmarks
 npm run arena -- --a greedy --b random --games 200
 npm run arena -- --a greedy:revealBonus=0 --b greedy -n 400 -j 8 --out results/test.json
-npm run arena -- --a my-bot --b greedy --tc 60+1      # đồng hồ thật 60s + 1s/nước, hết giờ là thua
+npm run arena -- --a my-bot --b greedy --tc 60+1      # real clock 60s + 1s/move, running out of time loses
 ```
 
-- Mỗi seed chơi 2 ván đổi màu cho công bằng. Cùng seed + cùng bot ⇒ kết quả y hệt (tái lập được để debug).
-- In ra: thắng/hoà/thua (tách theo màu), Elo chênh lệch kèm khoảng tin cậy 95%, LOS (xác suất A mạnh hơn B), thời gian mỗi nước, độ sâu trung bình, lý do kết thúc.
-- Bot đi nước sai luật hoặc bị lỗi ⇒ xử thua (`illegal-move`, `bot-error`), có ghi chi tiết.
-- Quá `--max-plies` (mặc định 300) ⇒ xử hoà.
-- `--out` lưu toàn bộ ván (seed + nước đi); dựng lại bằng `replay(J, record)` trong `arena/match.js`.
+- Each seed is played twice with colours swapped, for fairness. Same seed + same bots ⇒ identical result (reproducible for debugging).
+- Output: wins/draws/losses (split by colour), Elo difference with a 95% confidence interval, LOS (probability that A is stronger than B), time per move, average depth, end reasons.
+- A bot that plays an illegal move or throws ⇒ loses (`illegal-move`, `bot-error`), with details recorded.
+- Beyond `--max-plies` (default 300) ⇒ adjudicated as a draw.
+- `--out` saves every game (seed + moves); rebuild one with `replay(J, record)` from `arena/match.js`.
 
-Mốc tham khảo: `greedy` vs `random` ≈ 95%; `search-v3` vs `greedy` ≈ 92,5%; `search` vs `search-v3` ≈ 85%.
+Reference points: `greedy` vs `random` ≈ 95%; `search-v3` vs `greedy` ≈ 92.5%; `search` vs `search-v3` ≈ 85%.
 
-## Mã nguồn mở tham khảo
+## Open-source references
 
 - [wenpinglaoyao/jieqiGame](https://github.com/wenpinglaoyao/jieqiGame)
-- [Warm-rain/Pikafish](https://github.com/Warm-rain/Pikafish) (fork Pikafish cho Jieqi)
+- [Warm-rain/Pikafish](https://github.com/Warm-rain/Pikafish) (Pikafish fork for Jieqi)
 - [arthuryangcs/JieqiAI](https://github.com/arthuryangcs/JieqiAI)

@@ -5,7 +5,8 @@
  * Board: 9 columns (x = 0..8) × 10 rows (y = 0..9). Square index = y * 9 + x.
  * Red ('r') is at the bottom (rows 5..9) and moves first. Black ('b') is at the top (rows 0..4).
  *
- * Piece types: K Tướng, A Sĩ, E Tượng, H Mã, R Xe, C Pháo, P Tốt.
+ * Piece types: K King (Tướng), A Advisor (Sĩ), E Elephant (Tượng), H Horse (Mã), R Rook (Xe),
+ *              C Cannon (Pháo), P Pawn (Tốt).
  * A piece object: { side: 'r'|'b', type: <type>|null, hidden: bool, role: <type> }
  *   - role   = the type of the starting square (how a hidden piece moves)
  *   - type   = real identity, null while hidden (it is drawn from the side's pool when revealed)
@@ -13,15 +14,15 @@
  * Rules implemented:
  *   - Both kings start face-up; the other 15 pieces of each side are face-down on the standard squares.
  *   - A face-down piece moves like the piece of its starting square (standard xiangqi rules,
- *     so a hidden Sĩ stays in the palace and a hidden Tượng stays on its own side).
+ *     so a hidden Advisor stays in the palace and a hidden Elephant stays on its own side).
  *   - When it moves it is revealed; its identity is drawn at random from the side's remaining pool.
  *     (Drawing at reveal time has the same probabilities as shuffling at the start, and it makes
  *     chance nodes explicit for a future bot.)
- *   - A revealed Sĩ / Tượng is NOT restricted to the palace / own half (common Jieqi rule).
+ *   - A revealed Advisor / Elephant is NOT restricted to the palace / own half (common Jieqi rule).
  *   - Capturing a face-down piece reveals what it was (drawn from the owner's pool).
  *   - Flying-general rule, no moving into check. No legal moves = loss (checkmate or stalemate).
- *   - Lặp nước theo luật Trung Quốc (中国象棋竞赛规则): xem phần "Lặp nước" bên dưới.
- *   - Hoà khi 60 hiệp (120 nửa nước) liên tiếp không bên nào ăn quân hay lật quân (自然限着).
+ *   - Repetition under the Chinese rules (中国象棋竞赛规则): see the "Repetition" section below.
+ *   - Draw after 60 moves (120 plies) in a row with no capture and no reveal by either side (自然限着).
  */
 (function (root) {
   'use strict';
@@ -32,8 +33,8 @@
   const BACK_RANK = ['R', 'H', 'E', 'A', 'K', 'A', 'E', 'H', 'R'];
   const DEFAULT_RULES = {
     repetition: 'chinese',  // 'chinese' | 'none'
-    repetitionCount: 3,     // thế cờ xuất hiện lần thứ N thì phân xử
-    naturalLimit: 120,      // số nửa nước liên tiếp không ăn/lật quân thì hoà (60 hiệp)
+    repetitionCount: 3,     // adjudicate when a position occurs for the N-th time
+    naturalLimit: 120,      // plies in a row without capture/reveal → draw (60 moves)
   };
 
   const NAMES_VI = { K: 'Tướng', A: 'Sĩ', E: 'Tượng', H: 'Mã', R: 'Xe', C: 'Pháo', P: 'Tốt' };
@@ -80,7 +81,7 @@
       pools: { r: { ...START_POOL }, b: { ...START_POOL } },
       captured: { r: [], b: [] }, // captured[side] = pieces captured BY side
       ply: 0,
-      quietPlies: 0,              // số nửa nước liên tiếp không ăn quân / lật quân
+      quietPlies: 0,              // plies in a row without a capture / reveal
       lastMove: null,
       result: null, // { winner: 'r'|'b'|null, reason, detail? }
       seed,
@@ -95,7 +96,7 @@
     return s;
   }
 
-  // ---------- Khoá thế cờ (Zobrist) – dùng để phát hiện lặp nước ----------
+  // ---------- Position key (Zobrist) – used to detect repetition ----------
   const ZOB = (() => {
     let a = 0x9e3779b9;
     const r32 = () => { // mulberry32
@@ -110,7 +111,7 @@
   const ZCODE = { K: 0, A: 1, E: 2, H: 3, R: 4, C: 5, P: 6 };
   const ZPOOL = ['A', 'E', 'H', 'R', 'C', 'P'];
 
-  /** Khoá số (53 bit) của thế cờ: vị trí quân (kể cả quân úp theo role), lượt đi, pool quân úp. */
+  /** Numeric (53-bit) position key: piece placement (hidden pieces by role), side to move, hidden pools. */
   function positionKey(state) {
     const [h1, h2] = positionKeyParts(state);
     return combineKey(h1, h2);
@@ -159,8 +160,8 @@
   const DIAG = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
 
   /**
-   * Ghi các ô đích "giả hợp lệ" (chưa loại nước tự để Tướng bị chiếu) của quân ở ô i vào `out`
-   * bắt đầu từ vị trí `n`; trả về vị trí kết thúc. Không cấp phát bộ nhớ – dùng cho vòng lặp nóng.
+   * Writes the pseudo-legal target squares (self-check not filtered out) of the piece on square i into `out`
+   * starting at index `n`; returns the end index. Allocation-free – meant for hot loops.
    */
   function genTargets(board, i, out, n) {
     const p = board[i];
@@ -190,7 +191,7 @@
           const dx = DIAG[d][0], dy = DIAG[d][1];
           nx = x + 2 * dx; ny = y + 2 * dy;
           if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
-          if (board[(y + dy) * W + x + dx]) continue;           // mắt Tượng bị chặn
+          if (board[(y + dy) * W + x + dx]) continue;           // Elephant's eye is blocked
           if (p.hidden && !onOwnHalf(side, ny)) continue;
           t = ny * W + nx; q = board[t];
           if (!q || q.side !== side) out[n++] = t;
@@ -200,7 +201,7 @@
         for (let d = 0; d < 4; d++) {
           const dx = ORTH[d][0], dy = ORTH[d][1];
           const lx = x + dx, ly = y + dy;
-          if (lx < 0 || lx >= W || ly < 0 || ly >= H || board[ly * W + lx]) continue; // chân Mã bị chặn
+          if (lx < 0 || lx >= W || ly < 0 || ly >= H || board[ly * W + lx]) continue; // Horse's leg is blocked
           for (let s2 = -1; s2 <= 1; s2 += 2) {
             if (dx !== 0) { nx = x + 2 * dx; ny = y + s2; } else { nx = x + s2; ny = y + 2 * dy; }
             if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
@@ -279,7 +280,7 @@
     return true;
   }
 
-  /** Bản chậm (cho mọi quân sinh nước rồi xem có trúng ô không) – giữ lại để test đối chiếu. */
+  /** Slow version (generate moves for every piece and check whether one hits the square) – kept for cross-checking in tests. */
   function isSquareAttackedSlow(board, sq, bySide) {
     for (let i = 0; i < board.length; i++) {
       const p = board[i];
@@ -288,19 +289,19 @@
     return false;
   }
 
-  const HORSE_ATTACKS = [ // [dx, dy] từ ô bị tấn công tới Mã, kèm ô "chân" của Mã [lx, ly]
+  const HORSE_ATTACKS = [ // [dx, dy] from the attacked square to the Horse, plus the Horse's "leg" [lx, ly]
     [2, 1, 1, 1], [2, -1, 1, -1], [-2, 1, -1, 1], [-2, -1, -1, -1],
     [1, 2, 1, 1], [-1, 2, -1, 1], [1, -2, 1, -1], [-1, -2, -1, -1],
   ];
 
   /**
-   * Ô sq có bị bên `by` tấn công không – dò ngược từ sq ra (nhanh hơn nhiều so với sinh nước của mọi quân).
-   * Quân úp tấn công theo `role` (kèm giới hạn cung/sông của Sĩ/Tượng úp).
-   * Tướng đối mặt (cùng cột, không có quân giữa) cũng tính là bị tấn công.
+   * Is square sq attacked by side `by`? Scans outward from sq (much faster than generating moves for every piece).
+   * Hidden pieces attack according to their `role` (with the palace/river limits of hidden Advisors/Elephants).
+   * Facing kings (same file, nothing in between) also count as an attack.
    */
   function isSquareAttacked(board, sq, by) {
     const x = X(sq), y = Y(sq);
-    // Xe / Pháo / Tướng (lộ mặt) / Tốt (1 ô) theo 4 hướng
+    // Rook / Cannon / King (flying general) / Pawn (1 square) in 4 directions
     for (let d = 0; d < 4; d++) {
       const dx = ORTH[d][0], dy = ORTH[d][1];
       let nx = x + dx, ny = y + dy, dist = 1, screen = false;
@@ -312,12 +313,12 @@
               const t = q.hidden ? q.role : q.type;
               if (t === 'R') return true;
               if (t === 'K') {
-                if (dist === 1 && inPalace(by, x, y)) return true;                        // Tướng kề bên (trong cung nó)
-                if (dx === 0 && board[sq] && board[sq].type === 'K') return true;         // lộ mặt tướng
+                if (dist === 1 && inPalace(by, x, y)) return true;                        // adjacent King (inside its palace)
+                if (dx === 0 && board[sq] && board[sq].type === 'K') return true;         // flying general
               }
               if (t === 'P' && dist === 1) {
-                const fwd = by === 'r' ? -1 : 1; // hướng đi của Tốt bên tấn công
-                if (dy === -fwd) return true;   // Tốt đứng ngay "sau" ô (theo hướng nó đi tới)
+                const fwd = by === 'r' ? -1 : 1; // forward direction of the attacking side's Pawns
+                if (dy === -fwd) return true;   // Pawn right "behind" the square (relative to its direction)
                 if (dy === 0 && crossedRiver(by, ny)) return true;
               }
             }
@@ -330,19 +331,19 @@
         nx += dx; ny += dy; dist++;
       }
     }
-    // Mã
+    // Horse
     for (let k = 0; k < 8; k++) {
       const a = HORSE_ATTACKS[k];
       const hx = x + a[0], hy = y + a[1];
       if (hx < 0 || hx >= W || hy < 0 || hy >= H) continue;
       const q = board[hy * W + hx];
       if (!q || q.side !== by || (q.hidden ? q.role : q.type) !== 'H') continue;
-      // chân Mã: ô kề Mã theo hướng đi 2 bước
+      // Horse's leg: the square next to the Horse in the 2-step direction
       const lx = Math.abs(a[0]) === 2 ? hx - a[2] : hx;
       const ly = Math.abs(a[1]) === 2 ? hy - a[3] : hy;
       if (!board[ly * W + lx]) return true;
     }
-    // Sĩ (chéo 1) và Tượng (chéo 2, mắt trống)
+    // Advisor (1 diagonal) and Elephant (2 diagonal, eye empty)
     for (let k = 0; k < 4; k++) {
       const dx = DIAG[k][0], dy = DIAG[k][1];
       const ax = x + dx, ay = y + dy;
@@ -350,7 +351,7 @@
       const q = board[ay * W + ax];
       if (q) {
         if (q.side === by && (q.hidden ? q.role : q.type) === 'A' && (!q.hidden || inPalace(by, x, y))) return true;
-        continue; // mắt Tượng bị chặn
+        continue; // Elephant's eye is blocked
       }
       const ex = x + 2 * dx, ey = y + 2 * dy;
       if (ex < 0 || ex >= W || ey < 0 || ey >= H) continue;
@@ -363,7 +364,7 @@
   function inCheckOnBoard(board, side, kingSq) {
     const k = kingSq != null ? kingSq : kingSquare(board, side);
     if (k < 0) return true;
-    return isSquareAttacked(board, k, opp(side)); // đã gồm luật lộ mặt tướng
+    return isSquareAttacked(board, k, opp(side)); // includes the flying-general rule
   }
 
   const isInCheck = (state, side = state.turn) => inCheckOnBoard(state.board, side);
@@ -380,7 +381,7 @@
     return filterRepetition(state, moves);
   }
 
-  /** Nước hợp lệ về hình học (đúng luật đi quân, không tự để Tướng bị chiếu), chưa xét luật lặp. */
+  /** Geometrically legal moves (correct piece movement, no self-check), repetition rules not applied. */
   function getGeometricMoves(state, opts) {
     const side = state.turn;
     const board = state.board;
@@ -397,7 +398,7 @@
         const to = buf[k];
         const captured = board[to];
         if (capturesOnly && !captured) continue;
-        // đi thử ngay trên bàn rồi trả lại (không sao chép bàn cờ)
+        // try the move in place and undo it (no board copy)
         board[to] = p;
         board[from] = null;
         const illegal = isSquareAttacked(board, p.type === 'K' ? to : myKing, enemy);
@@ -410,8 +411,8 @@
   }
 
   /**
-   * Đếm nhanh số nước đi "giả hợp lệ" của `side` (không loại nước tự để Tướng bị chiếu).
-   * Rẻ hơn getLegalMoves nhiều – dùng cho đánh giá độ cơ động.
+   * Fast count of the pseudo-legal moves of `side` (self-check not filtered out).
+   * Much cheaper than getLegalMoves – used for the mobility term of the evaluation.
    */
   const COUNT_BUF = new Int16Array(64);
   function countPseudoMoves(state, side) {
@@ -465,7 +466,7 @@
    * opts.fast      – skip legality check and game-result computation (for bot search)
    * opts.trusted   – skip only the legality check (caller already validated the move)
    * opts.captureUnknown – capturing a hidden piece does not draw its identity (search only)
-   * Kết quả có thêm: key (khoá thế cờ), rep (chuỗi thế cờ từ lần ăn/lật quân gần nhất – để xét lặp nước).
+   * The result also carries: key (position key), rep (chain of positions since the last capture/reveal – for repetition).
    */
   function makeMove(state, move, opts = {}) {
     if (state.result && !opts.fast) throw new Error('Game is over');
@@ -481,8 +482,8 @@
     };
 
     if (target) {
-      // captureUnknown: ăn quân úp mà không bốc từ pool (dùng trong tìm kiếm – tỉ lệ pool giữ nguyên
-      // đúng bằng kỳ vọng). Khi đó type = null và pool có thể nhiều hơn số quân úp còn trên bàn.
+      // captureUnknown: capture a hidden piece without drawing from the pool (search only – the pool ratios
+      // stay exactly at their expectation). Then type = null and the pool may exceed the hidden pieces left on the board.
       const type = !target.hidden ? target.type
         : opts.captureUnknown ? null : drawFromPool(s, target.side, opts.captureAs);
       info.captured = { side: target.side, type, wasHidden: target.hidden };
@@ -501,8 +502,8 @@
     s.ply++;
     s.quietPlies = target || info.revealed ? 0 : s.quietPlies + 1;
     s.lastMove = info;
-    // Chuỗi thế cờ kể từ nước không thể đảo ngược gần nhất (ăn quân / lật quân): chỉ trong
-    // khoảng này thế cờ mới có thể lặp lại. Danh sách liên kết bất biến – rẻ, dùng chung giữa các state.
+    // Chain of positions since the last irreversible move (capture / reveal): only within this
+    // span can a position repeat. Immutable linked list – cheap and shared between states.
     [s.k1, s.k2] = positionKeyParts(s);
     s.key = combineKey(s.k1, s.k2);
     s.rep = target || info.revealed || !state.rep
@@ -513,8 +514,8 @@
   }
 
   /**
-   * Lật hết quân úp còn trên bàn (dùng khi hết ván để xem quân thật).
-   * Trả về state MỚI; danh tính rút từ pool như khi lật bình thường.
+   * Reveal every hidden piece left on the board (used after the game to see the real pieces).
+   * Returns a NEW state; identities are drawn from the pool just like a normal reveal.
    */
   function revealAll(state) {
     const s = cloneState(state);
@@ -530,7 +531,7 @@
   function computeResult(s) {
     const rules = s.rules || DEFAULT_RULES;
     if (getLegalMoves(s).length === 0) {
-      // còn nước đi nhưng toàn nước lặp bị cấm → bên phạm luật không đổi được nước → thua
+      // moves exist but all are forbidden repetitions → the violating side cannot deviate → loss
       const banned = forbiddenMoves(s);
       if (banned.length) return { winner: opp(s.turn), reason: banned[0].violation, detail: 'no-other-move' };
       return { winner: opp(s.turn), reason: isInCheck(s) ? 'checkmate' : 'stalemate' };
@@ -539,8 +540,8 @@
       const r = repetitionStatus(s);
       if (r && r.count >= rules.repetitionCount) {
         const mover = opp(s.turn);
-        // Không ai phạm (hoặc phạm ngang nhau) → hoà. Bên vừa đi là bên phạm (chỉ xảy ra khi bỏ qua kiểm tra
-        // hợp lệ) → thua. Bên phạm là bên sắp đi → ván tiếp tục, bên đó buộc phải đổi nước.
+        // Nobody violates (or both equally) → draw. The side that just moved is the violator (only possible when the
+        // legality check was skipped) → loss. The violator is the side to move → game goes on, that side must deviate.
         if (!r.result.winner) return r.result;
         if (r.result.winner !== mover) return r.result;
       }
@@ -550,16 +551,16 @@
   }
 
   /**
-   * Luật Trung Quốc "bắt đổi nước": nước nào làm thế cờ xuất hiện lần thứ `repetitionCount` mà bên đi là
-   * bên phạm luật (chiếu dai, đuổi bắt dai…) thì không được đi. Trả về danh sách nước còn lại.
+   * Chinese "must deviate" rule: a move that makes a position occur for the `repetitionCount`-th time while the mover
+   * is the violating side (perpetual check, perpetual chase…) is not allowed. Returns the remaining moves.
    */
   function filterRepetition(state, moves) {
     const rules = state.rules;
     const head = state.rep;
     if (!rules || rules.repetition === 'none' || !head) return moves;
-    const need = rules.repetitionCount - 1;       // số lần thế cờ con đã xuất hiện trước đó
-    if (head.len < need * 4) return moves;        // chuỗi quá ngắn để lặp đủ số lần
-    // đếm các thế cờ cùng lượt với thế cờ con (khoảng cách lẻ tính từ thế cờ hiện tại)
+    const need = rules.repetitionCount - 1;       // times the child position must already have occurred
+    if (head.len < need * 4) return moves;        // chain too short to repeat often enough
+    // count positions with the same side to move as the child (odd distance from the current position)
     const counts = new Map();
     let maxCount = 0;
     for (let node = head.prev, d = 1; node; node = node.prev, d++) {
@@ -574,19 +575,19 @@
     const out = [];
     for (const m of moves) {
       const p = state.board[m.from];
-      if (state.board[m.to] || p.hidden) { out.push(m); continue; } // ăn / lật quân: không thể lặp
+      if (state.board[m.to] || p.hidden) { out.push(m); continue; } // capture / reveal: cannot repeat
       const z = pieceZ(p);
       const h1 = k1 ^ ZOB.a[m.from * 28 + z] ^ ZOB.a[m.to * 28 + z] ^ ZOB.turnA;
       const h2 = k2 ^ ZOB.b[m.from * 28 + z] ^ ZOB.b[m.to * 28 + z] ^ ZOB.turnB;
       if ((counts.get(combineKey(h1, h2)) || 0) < need) { out.push(m); continue; }
       const st = repetitionStatus(makeMove(state, m, { fast: true }));
-      if (st && st.result.winner === opp(state.turn)) continue; // bên đi là bên phạm luật → cấm
+      if (st && st.result.winner === opp(state.turn)) continue; // mover is the violating side → forbidden
       out.push(m);
     }
     return out;
   }
 
-  /** Các nước bị cấm vì luật lặp (để UI giải thích): [{ from, to, violation }]. */
+  /** Moves forbidden by the repetition rules (so the UI can explain): [{ from, to, violation }]. */
   function forbiddenMoves(state) {
     const all = getGeometricMoves(state);
     if (!state.rep || all.length === 0) return [];
@@ -600,34 +601,34 @@
     return out;
   }
 
-  // ---------- Lặp nước theo luật Trung Quốc ----------
+  // ---------- Repetition (Chinese rules) ----------
   /*
-   * Khi một thế cờ lặp lại, xét các nước của mỗi bên trong vòng lặp (giữa 2 lần xuất hiện gần nhất):
-   *   check  将  – chiếu Tướng
-   *   mate   杀  – doạ chiếu bí: nếu đối phương "bỏ lượt" thì có nước chiếu bí ngay
-   *   chase  捉  – tạo mới một nước ăn quân CÓ LỢI: quân bị bắt không có quân bảo vệ (ăn lại được),
-   *               hoặc quân bị bắt đáng giá hơn quân bắt (vd Mã/Pháo bắt Xe – dù Xe có căn).
-   *               Không tính: Tướng hoặc Tốt đi bắt; bắt Tốt chưa qua sông; đề nghị đổi quân (兑).
-   *   idle   闲  – mọi nước khác (kể cả 兑, 献, 拦, 跟)
-   * Một bên mà MỌI nước trong vòng lặp đều là check/mate/chase (长将, 长杀, 长捉, 一将一捉, 一将一杀,
-   * 一杀一捉 …) là phạm luật (禁止着法). Chiếu dai là nặng nhất. Bên phạm nặng hơn thua; hai bên
-   * phạm ngang nhau hoặc không ai phạm → hoà.
+   * When a position repeats, classify each side's moves within the cycle (between its 2 latest occurrences):
+   *   check  将  – gives check
+   *   mate   杀  – mate threat: if the opponent "passed", there would be an immediate checkmate
+   *   chase  捉  – creates a new PROFITABLE capture: the target has no defender (cannot be recaptured),
+   *               or the target is worth more than the attacker (e.g. Horse/Cannon attacking a defended Rook).
+   *               Not counted: King or Pawn as the attacker; attacking an uncrossed Pawn; offering a trade (兑).
+   *   idle   闲  – every other move (including 兑, 献, 拦, 跟)
+   * A side whose EVERY move in the cycle is check/mate/chase (长将, 长杀, 长捉, 一将一捉, 一将一杀,
+   * 一杀一捉 …) violates the rules (禁止着法). Perpetual check is the most serious. The more serious violator
+   * loses; equal violations or no violation → draw.
    */
   const CHASE_VALUE = { K: 100, R: 9, H: 4, C: 4, A: 2, E: 2, P: 1 };
   const HIDDEN_CHASE_VALUE = 3;
   const chaseValue = (p) => (p.hidden ? HIDDEN_CHASE_VALUE : CHASE_VALUE[p.type]);
 
-  /** Các ô quân của đối phương mà `side` (đang tới lượt) có thể ăn CÓ LỢI trên bàn `board`. */
+  /** Squares of enemy pieces that `side` (to move) can capture PROFITABLY on `board`. */
   function chaseTargets(board, side, pools) {
     const out = new Set();
     const enemy = opp(side);
     for (const m of getLegalMoves({ board, turn: side, pools }, { capturesOnly: true })) {
       const a = board[m.from], v = board[m.to];
       const at = a.hidden ? a.role : a.type;
-      if (at === 'K' || at === 'P') continue;                                  // Tướng / Tốt đi bắt: tính là nhàn
-      if (!v.hidden && v.type === 'P' && !crossedRiver(v.side, Y(m.to))) continue; // Tốt chưa qua sông
-      if (chaseValue(v) > chaseValue(a)) { out.add(m.to); continue; }          // bắt quân đắt hơn: luôn có lợi
-      // quân bị bắt có "căn thật" không: sau khi ăn, đối phương ăn lại được (hợp lệ) không
+      if (at === 'K' || at === 'P') continue;                                  // King / Pawn attacking: counts as idle
+      if (!v.hidden && v.type === 'P' && !crossedRiver(v.side, Y(m.to))) continue; // Pawn not across the river
+      if (chaseValue(v) > chaseValue(a)) { out.add(m.to); continue; }          // attacking a more valuable piece: always profitable
+      // is the target really defended: after the capture, can the opponent legally recapture?
       const b2 = board.slice();
       b2[m.to] = a; b2[m.from] = null;
       const recapture = getLegalMoves({ board: b2, turn: enemy, pools }, { capturesOnly: true }).some((x) => x.to === m.to);
@@ -636,11 +637,11 @@
     return out;
   }
 
-  /** Sau khi `side` đi xong (bàn `after`), nếu đối phương bỏ lượt thì `side` có chiếu bí ngay được không. */
+  /** After `side` has moved (board `after`), if the opponent passed, could `side` checkmate immediately? */
   function threatensMate(after, side, pools) {
     const enemy = opp(side);
     for (const m of getLegalMoves({ board: after, turn: side, pools })) {
-      if (after[m.from].hidden) continue; // quân úp: chưa biết là gì – không tính
+      if (after[m.from].hidden) continue; // hidden piece: identity unknown – not counted
       const b2 = after.slice();
       b2[m.to] = b2[m.from]; b2[m.from] = null;
       if (inCheckOnBoard(b2, enemy) && getLegalMoves({ board: b2, turn: enemy, pools }).length === 0) return true;
@@ -648,7 +649,7 @@
     return false;
   }
 
-  /** Phân loại 1 nước của `side` (bàn trước `before`, bàn sau `after`): 'check' | 'mate' | 'chase' | 'idle'. */
+  /** Classify one move of `side` (board before: `before`, after: `after`): 'check' | 'mate' | 'chase' | 'idle'. */
   function classifyMove(before, after, side, pools) {
     if (inCheckOnBoard(after, opp(side))) return 'check';
     if (threatensMate(after, side, pools)) return 'mate';
@@ -658,11 +659,11 @@
   }
 
   /**
-   * Tình trạng lặp nước của thế cờ hiện tại, hoặc null nếu thế cờ chưa từng xuất hiện.
+   * Repetition status of the current position, or null if the position has not occurred before.
    * { count, cycle: [{ side, from, to, kind }], violators: { r, b }, result }
-   *   count  – số lần thế cờ hiện tại đã xuất hiện (kể cả lần này)
-   *   result – phân xử: winner = bên không phạm luật (bên phạm luật bị buộc đổi nước; nếu không còn nước khác
-   *            thì thua), hoặc winner = null = hoà
+   *   count  – how many times the current position has occurred (including now)
+   *   result – ruling: winner = the non-violating side (the violator must deviate; if it has no other move
+   *            it loses), or winner = null = draw
    */
   function repetitionStatus(state) {
     const head = state.rep;
@@ -675,7 +676,7 @@
     }
     if (count < 2) return null;
 
-    // Dựng lại các bàn cờ trong vòng lặp bằng cách đi lùi (không có ăn/lật quân trong chuỗi này)
+    // Rebuild the boards of the cycle by stepping backwards (no captures/reveals inside this chain)
     const boards = [state.board.slice()];
     const moves = [];
     node = head;
@@ -688,7 +689,7 @@
     }
     const cycle = [];
     for (let i = 0; i < cycleLen; i++) {
-      // nước i (tính lùi từ hiện tại) đưa bàn boards[i+1] thành boards[i]; bên đi = bên KHÔNG tới lượt ở boards[i]
+      // move i (counting back from now) turns boards[i+1] into boards[i]; mover = the side NOT to move in boards[i]
       const side = i % 2 === 0 ? opp(state.turn) : state.turn;
       const kind = classifyMove(boards[i + 1], boards[i], side, state.pools);
       cycle.unshift({ side, from: moves[i].from, to: moves[i].to, kind });
@@ -703,9 +704,9 @@
           : kinds.has('chase') ? 'perpetual-chase'                    // 长捉
             : 'perpetual-mate-threat';                                // 长杀
     }
-    // Mức vi phạm: chiếu dai (3) nặng hơn các kiểu tấn công dai khác (2); hợp lệ (0).
-    // Bên vi phạm nặng hơn thua; ngang nhau (cùng phạm hoặc cùng không phạm) thì hoà.
-    // Vd: một bên chiếu dai, bên kia chạy Tướng nhưng vẫn giữ thế doạ bí → bên chiếu dai thua.
+    // Violation level: perpetual check (3) is more serious than other perpetual attacks (2); legal (0).
+    // The more serious violator loses; equal levels (both or neither violating) → draw.
+    // E.g. one side checks perpetually, the other runs with its King while keeping a mate threat → the checker loses.
     const level = (v) => (!v ? 0 : v === 'perpetual-check' ? 3 : 2);
     const lr = level(violators.r), lb = level(violators.b);
     let result;

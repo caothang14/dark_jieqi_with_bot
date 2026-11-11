@@ -1,17 +1,17 @@
 /*
- * Chơi 1 ván giữa 2 bot (Node hoặc trình duyệt – không phụ thuộc DOM).
+ * Plays one game between 2 bots (Node or browser – no DOM dependency).
  *
  *   const rec = await playGame({ J, bots, seed: 1, red: 'greedy', black: 'random' });
  *
  * opts:
- *   seed        seed ván cờ (quyết định quân lật ra) – bot cũng nhận ctx.random có seed riêng từ đây
- *   red, black  spec bot: 'greedy' hoặc 'greedy:revealBonus=1'
- *   maxPlies    quá số nửa nước này thì xử hoà (mặc định 300)
- *   moveTimeMs  thời gian gợi ý mỗi nước khi không có đồng hồ (mặc định 1000)
- *   tc          null hoặc { initialMs, incrementMs } – đồng hồ thật, hết giờ là thua
+ *   seed        game seed (decides what hidden pieces turn out to be) – bots also get a seeded ctx.random derived from it
+ *   red, black  bot spec: 'greedy' or 'greedy:revealBonus=1'
+ *   maxPlies    adjudicate a draw beyond this many plies (default 300)
+ *   moveTimeMs  suggested time per move when there is no clock (default 1000)
+ *   tc          null or { initialMs, incrementMs } – real clock, running out of time loses
  *
- * Trả về record: { seed, red, black, result: { winner, reason, detail? }, plies, moves, stats }
- *   moves: [{ from, to }]  – cùng seed + cùng moves => tái hiện được đúng ván (kể cả quân lật ra)
+ * Returns a record: { seed, red, black, result: { winner, reason, detail? }, plies, moves, stats }
+ *   moves: [{ from, to }]  – same seed + same moves => the exact same game (including reveals)
  */
 (function (root) {
   'use strict';
@@ -81,7 +81,7 @@
     };
   }
 
-  /** Dựng lại state cuối (hoặc mọi state) từ record – dùng để replay/debug. */
+  /** Rebuild the final state (or any state) from a record – for replay/debugging. */
   function replay(J, record, upToPly = Infinity) {
     let s = J.createGame({ seed: record.seed });
     for (let i = 0; i < record.moves.length && i < upToPly; i++) s = J.makeMove(s, record.moves[i]);

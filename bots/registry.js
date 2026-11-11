@@ -1,52 +1,52 @@
 /*
- * Bot registry – chạy được cả trong trình duyệt (window.JieqiBots) lẫn Node (globalThis.JieqiBots).
+ * Bot registry – works both in the browser (window.JieqiBots) and in Node (globalThis.JieqiBots).
  *
- * ── Định nghĩa một bot ──────────────────────────────────────────────────────────────
+ * ── Defining a bot ──────────────────────────────────────────────────────────────────
  *   JieqiBots.register({
- *     id: 'greedy',                       // duy nhất, a-z0-9-
- *     name: 'Bot tham ăn',                // tên hiển thị
+ *     id: 'greedy',                       // unique, a-z0-9-
+ *     name: 'Bot tham ăn',                // display name
  *     description: '...',
- *     params: { captureWeight: 1 },       // tham số mặc định (có thể ghi đè khi chọn bot)
- *     chooseMove(state, J, ctx) { ... },  // BẮT BUỘC. Trả về {from,to} hoặc { move:{from,to}, info:{ score, depth, nodes, pv } }
- *                                         // Có thể trả về Promise (Web Worker, gọi HTTP tới service bot...)
- *     acceptDraw(state, J, ctx) { ... },  // tuỳ chọn, trả về boolean (hoặc Promise<boolean>)
- *     hidden: true,                       // tuỳ chọn: không hiện trong UI (bot tham chiếu cho đấu trường)
+ *     params: { captureWeight: 1 },       // default params (can be overridden when picking the bot)
+ *     chooseMove(state, J, ctx) { ... },  // REQUIRED. Returns {from,to} or { move:{from,to}, info:{ score, depth, nodes, pv } }
+ *                                         // May return a Promise (Web Worker, HTTP call to a bot service...)
+ *     acceptDraw(state, J, ctx) { ... },  // optional, returns a boolean (or Promise<boolean>)
+ *     hidden: true,                       // optional: hide from the UI (reference bot for the arena)
  *   });
  *
- * ── Biến thể (cùng thuật toán, khác tham số) ───────────────────────────────────────
+ * ── Variants (same algorithm, different params) ────────────────────────────────────
  *   JieqiBots.variant('greedy', { id: 'greedy-safe', name: 'Tham ăn (cẩn thận)', params: { ... } });
- *   Hoặc chọn nhanh bằng chuỗi: 'greedy:captureWeight=2,revealBonus=0'
+ *   Or pick one quickly with a string: 'greedy:captureWeight=2,revealBonus=0'
  *
- * ── ctx mà bot nhận được (host = UI hoặc đấu trường tạo ra) ─────────────────────────
- *   side          'r' | 'b'   bên bot đang cầm
- *   ply           số nửa nước đã đi
- *   params        tham số đã gộp (mặc định + ghi đè)
- *   random()      số ngẫu nhiên [0,1) – trong đấu trường có seed nên tái lập được. Bot KHÔNG nên dùng Math.random
- *   now()         thời gian hiện tại (ms)
- *   timeBudgetMs  thời gian nên dùng cho nước này
- *   deadline      now() + timeBudgetMs – bot tìm kiếm nên dừng trước mốc này
- *   clock         null hoặc { myTimeMs, oppTimeMs, incrementMs }
- *   history       mảng các nước đã đi [{from,to}] (để bot tránh lặp, mở cuộc…)
+ * ── ctx passed to the bot (created by the host = UI or arena) ──────────────────────
+ *   side          'r' | 'b'   the side the bot plays
+ *   ply           number of plies played so far
+ *   params        merged params (defaults + overrides)
+ *   random()      random number in [0,1) – seeded in the arena so games are reproducible. Bots should NOT use Math.random
+ *   now()         current time (ms)
+ *   timeBudgetMs  time the bot should spend on this move
+ *   deadline      now() + timeBudgetMs – a search bot should stop before this
+ *   clock         null or { myTimeMs, oppTimeMs, incrementMs }
+ *   history       array of moves played so far [{from,to}] (for repetition avoidance, opening book…)
  *
- * Bot không được sửa `state` (host luôn truyền bản sao), và không bao giờ nhìn thấy quân úp là gì
- * vì engine chỉ quyết định danh tính lúc lật.
+ * A bot must not modify `state` (the host always passes a copy), and it can never see what a hidden piece is,
+ * because the engine only decides the identity at reveal time.
  */
 (function (root) {
   'use strict';
-  if (root.JieqiBots && root.JieqiBots.register) return; // đã nạp
+  if (root.JieqiBots && root.JieqiBots.register) return; // already loaded
 
   const defs = new Map(); // id -> definition
 
   function register(def) {
-    if (!def || !/^[a-z0-9-]+$/.test(def.id || '')) throw new Error(`Bot id không hợp lệ: ${def && def.id}`);
-    if (typeof def.chooseMove !== 'function') throw new Error(`Bot ${def.id} thiếu chooseMove()`);
+    if (!def || !/^[a-z0-9-]+$/.test(def.id || '')) throw new Error(`Invalid bot id: ${def && def.id}`);
+    if (typeof def.chooseMove !== 'function') throw new Error(`Bot ${def.id} is missing chooseMove()`);
     defs.set(def.id, { params: {}, description: '', ...def, name: def.name || def.id });
     return def;
   }
 
   function variant(baseId, { id, name, description, params, hidden }) {
     const base = defs.get(baseId);
-    if (!base) throw new Error(`Không có bot gốc: ${baseId}`);
+    if (!base) throw new Error(`No such base bot: ${baseId}`);
     return register({
       ...base, id, name: name || id, description: description || base.description,
       params: { ...base.params, ...params }, baseId, hidden: !!hidden,
@@ -65,14 +65,14 @@
   }
 
   /**
-   * 'greedy' hoặc 'greedy:captureWeight=2' -> một "player" sẵn sàng dùng:
+   * 'greedy' or 'greedy:captureWeight=2' -> a ready-to-use "player":
    * { id, name, params, chooseMove(state, J, ctx), acceptDraw(state, J, ctx) }
-   * chooseMove luôn trả về Promise<{ move, info }>.
+   * chooseMove always returns Promise<{ move, info }>.
    */
   function resolve(spec) {
     const [id, query] = String(spec).split(/:(.*)/s);
     const def = defs.get(id);
-    if (!def) throw new Error(`Không có bot "${id}". Có: ${[...defs.keys()].join(', ')}`);
+    if (!def) throw new Error(`No bot "${id}". Available: ${[...defs.keys()].join(', ')}`);
     const params = { ...def.params, ...parseParams(query) };
     return {
       id: spec,
@@ -90,14 +90,14 @@
     };
   }
 
-  /** Gợi ý thời gian cho 1 nước khi có đồng hồ: ~1/30 thời gian còn lại + increment. */
+  /** Suggested time for one move when a clock is used: ~1/30 of the remaining time + increment. */
   function suggestBudget(clock, fallbackMs = 1000) {
     if (!clock) return fallbackMs;
     const ms = clock.myTimeMs / 30 + clock.incrementMs * 0.8;
     return Math.max(50, Math.min(ms, clock.myTimeMs * 0.5));
   }
 
-  /** RNG có seed (mulberry32) cho ctx.random. */
+  /** Seeded RNG (mulberry32) for ctx.random. */
   function seededRandom(seed) {
     let a = seed >>> 0;
     return function () {
@@ -112,6 +112,6 @@
     register, variant, resolve, parseParams, suggestBudget, seededRandom,
     list: () => [...defs.values()],
     get: (id) => defs.get(id),
-    lib: (root.JieqiBots && root.JieqiBots.lib) || {}, // helper dùng chung giữa các bot (bots/lib/*)
+    lib: (root.JieqiBots && root.JieqiBots.lib) || {}, // helpers shared between bots (bots/lib/*)
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

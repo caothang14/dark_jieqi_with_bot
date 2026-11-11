@@ -16,7 +16,7 @@ const test = async (name, fn) => { await fn(); passed++; console.log('✓', name
   await test('resolve merges params from spec string', () => {
     const p = bots.resolve('greedy:revealBonus=2,foo=bar,flag');
     assert.deepStrictEqual(p.params, { revealBonus: 2, drawThreshold: 0, foo: 'bar', flag: true });
-    assert.throws(() => bots.resolve('nope'), /Không có bot/);
+    assert.throws(() => bots.resolve('nope'), /No bot/);
   });
 
   await test('variant inherits base and overrides params', () => {

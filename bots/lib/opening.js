@@ -1,19 +1,19 @@
 /*
- * Thứ tự ưu tiên khi lật quân úp (kinh nghiệm người chơi), dùng chung cho các bot: JieqiBots.lib.opening
+ * Priority order for revealing hidden pieces (player experience), shared by the bots: JieqiBots.lib.opening
  *
- *   1. Tốt úp ở cột biên (a, i)            5. Mã úp
- *   2. Tốt úp ở cột 3, 7 (c, g)            6. Tượng úp đi ra biên (a / i)
- *   3. Tốt úp ở cột giữa (e)               7. Pháo úp tiến thẳng
- *   4. Sĩ úp vào tâm cung,                 8. Pháo úp đi ngang / lùi
- *      Tượng úp vào giữa (cột e)           9. Xe úp
+ *   1. hidden Pawn on an edge file (a, i)      5. hidden Horse
+ *   2. hidden Pawn on file 3, 7 (c, g)         6. hidden Elephant moving to the edge (a / i)
+ *   3. hidden Pawn on the centre file (e)      7. hidden Cannon moving straight forward
+ *   4. hidden Advisor to the palace centre,    8. hidden Cannon moving sideways / backwards
+ *      hidden Elephant to the centre (file e)  9. hidden Rook
  *
- * Áp dụng suốt lúc còn quân úp. Hạng càng nhỏ càng nên lật sớm. Việc "không lật vào mồm quân địch"
- * do bot tìm kiếm tự thấy (quiescence), bảng này chỉ sắp thứ tự giữa các nước an toàn.
+ * Applies as long as hidden pieces remain. The lower the rank, the earlier it should be revealed. "Don't reveal
+ * into the enemy's mouth" is found by the search bot itself (quiescence); this table only orders safe moves.
  */
 (function (root) {
   'use strict';
 
-  /** Hạng ưu tiên (1..9) của nước lật quân m, hoặc 0 nếu m không phải nước lật quân không ăn quân. */
+  /** Priority rank (1..9) of reveal move m, or 0 if m is not a non-capturing reveal move. */
   function revealRank(state, J, m) {
     const p = state.board[m.from];
     if (!p || !p.hidden || state.board[m.to]) return 0;
@@ -32,7 +32,7 @@
     return 9;
   }
 
-  /** Hạng tĩnh của một quân úp tại ô đang đứng (không xét nước đi) – dùng cho điểm "phát triển". */
+  /** Static rank of a hidden piece on its current square (independent of any move) – used for the "development" score. */
   function hiddenRank(p, x) {
     switch (p.role) {
       case 'P': return x === 0 || x === 8 ? 1 : x === 2 || x === 6 ? 2 : 3;

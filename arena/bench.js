@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /*
- * Đo tốc độ engine và bot tìm kiếm.   npm run bench   (hoặc: node arena/bench.js search:lmr=false)
+ * Benchmarks the engine and the search bot.   npm run bench   (or: node arena/bench.js search:lmr=false)
  *
- * - Thời gian các thao tác cơ bản (sinh nước, kiểm tra chiếu, đánh giá).
- * - perft(3): số chuỗi nước đi hợp lệ dài 3 nửa nước (quân lật ra cố định) – dùng để phát hiện
- *   thay đổi luật ngoài ý muốn khi tối ưu engine: tối ưu đúng thì con số không đổi.
- * - Bot tìm kiếm ở độ sâu cố định trên 6 thế cờ (khai cuộc → trung cuộc): thời gian, số nút, nút/ms.
+ * - Timing of basic operations (move generation, check detection, evaluation).
+ * - perft(3): number of legal 3-ply move sequences (with fixed reveal outcomes) – used to catch
+ *   accidental rule changes while optimising the engine: a correct optimisation keeps the numbers unchanged.
+ * - The search bot at fixed depths on 6 positions (opening → middlegame): time, nodes, nodes/ms.
  */
 'use strict';
 const path = require('path');
@@ -19,7 +19,7 @@ const depths = (process.argv[3] || '1,2,3').split(',').map(Number);
 
 const time = (f, n) => { const a = performance.now(); for (let i = 0; i < n; i++) f(); return ((performance.now() - a) / n) * 1000; };
 
-// 6 thế cờ cố định: sau 0, 12, 24, ... nửa nước
+// 6 fixed positions: after 0, 12, 24, ... plies
 const positions = [];
 for (let g = 0; g < 6; g++) {
   let s = J.createGame({ seed: g });
@@ -28,12 +28,12 @@ for (let g = 0; g < 6; g++) {
 }
 const avg = (f, n) => positions.reduce((a, s) => a + time(() => f(s), n), 0) / positions.length;
 
-console.log('Thao tác cơ bản (trung bình 6 thế cờ)');
+console.log('Basic operations (average over 6 positions)');
 console.log(`  getLegalMoves      ${avg((s) => J.getLegalMoves(s), 500).toFixed(1)} µs`);
 console.log(`  captures only      ${avg((s) => J.getLegalMoves(s, { capturesOnly: true }), 500).toFixed(1)} µs`);
 console.log(`  isInCheck          ${avg((s) => J.isInCheck(s), 3000).toFixed(2)} µs`);
 console.log(`  evaluate           ${avg((s) => E.evaluate(s, J, s.turn), 2000).toFixed(1)} µs`);
-console.log(`  makeMove (fast)    ${avg((s) => J.makeMove(s, J.getLegalMoves(s)[0], { fast: true }), 500).toFixed(1)} µs  (gồm 1 lần sinh nước)`);
+console.log(`  makeMove (fast)    ${avg((s) => J.makeMove(s, J.getLegalMoves(s)[0], { fast: true }), 500).toFixed(1)} µs  (includes 1 move generation)`);
 
 function perft(s, d) {
   if (d === 0) return 1;
@@ -48,7 +48,7 @@ function perft(s, d) {
   }
   return n;
 }
-// perft trên các thế cờ dựng bằng chuỗi nước cố định (không phụ thuộc thứ tự sinh nước)
+// perft on positions built from fixed move sequences (independent of move generation order)
 const perftPositions = [J.createGame({ seed: 1 })];
 {
   let s = J.createGame({ seed: 1 });
@@ -62,7 +62,7 @@ const pf = perftPositions.map((s) => perft(s, 3));
 console.log(`\nperft(3): ${pf.join(', ')}   (${(performance.now() - t0).toFixed(0)} ms)`);
 
 (async () => {
-  console.log(`\nBot "${spec}" – độ sâu cố định trên 6 thế cờ`);
+  console.log(`\nBot "${spec}" – fixed depth on 6 positions`);
   for (const d of depths) {
     const a = performance.now();
     let nodes = 0;
@@ -74,6 +74,6 @@ console.log(`\nperft(3): ${pf.join(', ')}   (${(performance.now() - t0).toFixed(
       moves.push(`${J.squareName(r.move.from)}${J.squareName(r.move.to)}`);
     }
     const ms = performance.now() - a;
-    console.log(`  depth=${d}  ${ms.toFixed(0).padStart(7)} ms  ${String(nodes).padStart(9)} nút  ${(nodes / ms).toFixed(0).padStart(4)} nút/ms   ${moves.join(' ')}`);
+    console.log(`  depth=${d}  ${ms.toFixed(0).padStart(7)} ms  ${String(nodes).padStart(9)} nodes  ${(nodes / ms).toFixed(0).padStart(4)} nodes/ms   ${moves.join(' ')}`);
   }
 })();

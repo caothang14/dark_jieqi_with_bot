@@ -1,17 +1,17 @@
-/* Helper dùng chung cho các bot: JieqiBots.lib.common */
+/* Helpers shared by the bots: JieqiBots.lib.common */
 (function (root) {
   'use strict';
 
-  // Giá trị quân cơ bản (đơn vị ~ 1 Tốt)
+  // Basic piece values (unit ~ 1 Pawn)
   const VALUE = { K: 1000, R: 9, C: 4.5, H: 4, E: 2, A: 2, P: 1 };
 
-  /** Giá trị kỳ vọng của 1 quân úp của `side` (trung bình theo pool còn lại). */
+  /** Expected value of one hidden piece of `side` (average over the remaining pool). */
   function expectedHiddenValue(state, J, side, values = VALUE) {
     const probs = J.revealProbabilities(state, side);
     return Object.entries(probs).reduce((sum, [t, p]) => sum + p * values[t], 0);
   }
 
-  /** Tổng giá trị quân (không tính Tướng) của `side`; quân úp tính theo giá trị kỳ vọng. */
+  /** Total material of `side` (King excluded); hidden pieces count at their expected value. */
   function material(state, J, side, values = VALUE) {
     const hv = expectedHiddenValue(state, J, side, values);
     let sum = 0;
@@ -22,7 +22,7 @@
     return sum;
   }
 
-  /** Chênh lệch quân theo góc nhìn của `side` (dương = đang hơn). */
+  /** Material difference from `side`'s point of view (positive = ahead). */
   const materialDiff = (state, J, side, values = VALUE) =>
     material(state, J, side, values) - material(state, J, J.opp(side), values);
 

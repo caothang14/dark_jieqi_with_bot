@@ -4,9 +4,9 @@
   const J = window.Jieqi;
   const ChessClock = window.ChessClock;
   const Bots = window.JieqiBots;
-  const MIN_BOT_DELAY_MS = 350; // để mắt người kịp theo dõi nước của bot
+  const MIN_BOT_DELAY_MS = 350; // so a human can follow the bot's moves
 
-  // Nạp các bot trong manifest (script thường nên chạy được cả khi mở file:// trực tiếp)
+  // Load the bots listed in the manifest (plain scripts, so it also works when opened via file://)
   const loadScript = (src) => new Promise((resolve, reject) => {
     const el = document.createElement('script');
     el.src = src;
@@ -25,7 +25,7 @@
     'quiet-limit': '60 hiệp không ăn quân',
     repetition: 'lặp nước, không bên nào phạm luật',
   };
-  // Lý do thua do lặp nước (luật Trung Quốc) – ghi theo bên phạm luật
+  // Loss reasons from repetition (Chinese rules) – phrased for the violating side
   const VIOLATION_VI = {
     'perpetual-check': 'chiếu dai',
     'perpetual-chase': 'đuổi bắt dai',
@@ -38,14 +38,14 @@
   const layer = $('layer');
 
   let history = [];       // stack of states; current = last
-  let clockSnaps = [];    // clockSnaps[i] = thời gian còn lại của 2 bên khi bắt đầu history[i]
+  let clockSnaps = [];    // clockSnaps[i] = both sides' remaining time at the start of history[i]
   let clock = null;
-  let endResult = null;     // kết quả không đến từ engine: hết giờ / chịu thua / hoà thoả thuận
-  let revealedState = null; // bản lật hết quân úp, chỉ để xem sau khi hết ván
+  let endResult = null;     // result not coming from the engine: timeout / resignation / agreed draw
+  let revealedState = null; // copy with every hidden piece revealed, only for viewing after the game
   let pendingConfirm = null;
   let selected = -1;
   let botThinking = false;
-  let botInfos = [];        // botInfos[i] = info bot trả về cho nước tạo ra history[i]
+  let botInfos = [];        // botInfos[i] = info returned by the bot for the move that produced history[i]
   const current = () => history[history.length - 1];
   const displayState = () => revealedState || current();
   const gameResult = () => current().result || endResult;
@@ -163,7 +163,7 @@
         d.addEventListener('click', (e) => { e.stopPropagation(); doMove(m); });
         layer.appendChild(d);
       }
-      // nước bị cấm do luật lặp (bắt đổi nước): hiện dấu ✕, bấm vào để xem lý do
+      // moves forbidden by the repetition rules (must deviate): show a ✕, click it for the reason
       if (!result && J.forbiddenMoves) {
         for (const f of J.forbiddenMoves(s).filter((x) => x.from === selected)) {
           const d = document.createElement('div');
@@ -189,7 +189,7 @@
     box.hidden = !info;
     if (!info) return;
     const f = (x) => (x > 0 ? '+' : '') + x.toFixed(2);
-    // thanh: tỉ lệ Đỏ theo hàm logistic của điểm
+    // bar: Red's share as a logistic function of the score
     const pct = info.terminal ? (info.score > 0 ? 100 : info.score < 0 ? 0 : 50) : 100 / (1 + Math.exp(-info.score / 4));
     const lead = info.score > 0.05 ? 'Đỏ hơn' : info.score < -0.05 ? 'Đen hơn' : 'Cân bằng';
     box.innerHTML = `<div><span class="big">${f(info.score)}</span> <span class="muted">(${lead}, góc nhìn Đỏ) · ${PHASE_VI[info.phase]}</span></div>`
@@ -261,7 +261,7 @@
     $('toast').textContent = toastText;
   }
 
-  // ---------- Kết thúc ván: chịu thua / cầu hoà / lật quân ----------
+  // ---------- End of game: resign / offer draw / reveal pieces ----------
   let toastText = '';
   let toastTimer = null;
   function toast(text) {
@@ -280,7 +280,7 @@
     render();
   }
 
-  // Bên đang thao tác: 2 người -> bên tới lượt; 1 người -> người đó; bot vs bot -> null.
+  // Acting side: 2 humans -> side to move; 1 human -> that human; bot vs bot -> null.
   function actingSide() {
     const humans = ['r', 'b'].filter((side) => !isBot(side));
     if (humans.length === 2) return current().turn;
@@ -325,7 +325,7 @@
     render();
   }
 
-  // ---------- Người chơi / bot ----------
+  // ---------- Players / bots ----------
   const playerSpec = (side) => $(side === 'r' ? 'playerR' : 'playerB').value;
   const isBot = (side) => playerSpec(side) !== 'human';
   const playerCache = new Map();
@@ -364,7 +364,7 @@
     render();
   }
 
-  /** Thế cờ vừa lặp lại: nếu có bên đang phạm luật thì cảnh báo trước khi bị xử thua. */
+  /** The position just repeated: if a side is violating the rules, warn before it gets penalised. */
   function warnRepetition(state) {
     if (state.result) { toastText = ''; return; }
     if (!J.repetitionStatus) return;
@@ -385,7 +385,7 @@
     if (gameResult()) return;
     const mover = current().turn;
     const next = J.makeMove(current(), m);
-    clock.press(mover);            // cộng giờ cho bên vừa đi, chạy giờ bên kia
+    clock.press(mover);            // add increment for the side that moved, start the other side's clock
     history.push(next);
     botInfos[history.length - 1] = info;
     clockSnaps.push(clock.snapshot());
@@ -443,7 +443,7 @@
 
   function undo() {
     if (botThinking) return;
-    // Vừa chịu thua / hoà / hết giờ: "Đi lại" chỉ huỷ kết quả đó, không lùi nước
+    // Just resigned / drew / timed out: "Undo" only cancels that result, it does not take back a move
     if (endResult) {
       endResult = null;
       revealedState = null;
@@ -455,13 +455,13 @@
     if (!actingSide()) return;
     if (history.length <= 1 || !actingSide()) return;
     history.pop(); clockSnaps.pop();
-    // lùi tiếp các nước của bot để tới lượt người
+    // keep taking back bot moves until it is a human's turn
     while (isBot(current().turn) && history.length > 1) { history.pop(); clockSnaps.pop(); }
     botInfos.length = history.length;
     endResult = null;
     revealedState = null;
     pendingConfirm = null;
-    // đồng hồ chỉ chạy sau nước đầu tiên
+    // the clock only starts after the first move
     clock.restore(clockSnaps[clockSnaps.length - 1], history.length > 1 ? current().turn : null);
     selected = -1;
     render();
@@ -476,7 +476,7 @@
   function onTimeControlChange() {
     $('customTime').hidden = $('timeControl').value !== 'custom';
     if (history.length <= 1 && !gameResult()) {
-      // chưa đi nước nào: áp dụng ngay
+      // no move played yet: apply immediately
       createClock();
       clockSnaps = [clock.snapshot()];
       render();
@@ -523,7 +523,7 @@
     if (e.key === ' ' && e.target === document.body) { e.preventDefault(); togglePause(); }
   });
 
-  // API nhỏ cho test / tính năng sau này (mở thế cờ, xem lại ván): nạp một state bất kỳ làm thế cờ hiện tại
+  // Small API for tests / future features (open a position, review a game): load any state as the current position
   window.CotuongUI = {
     load(state) {
       newGame();

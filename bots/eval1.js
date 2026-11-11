@@ -1,13 +1,13 @@
 /*
- * Bot đánh giá 1 nước: thử từng nước, chấm điểm thế cờ SAU nước đó bằng lib/eval.js,
- * lấy kỳ vọng qua mọi khả năng lật quân (quân mình lật ra gì, quân úp bị ăn là gì).
- * Chưa nhìn nước đáp trả của đối thủ – việc đó là của bot tìm kiếm (bước 3).
+ * 1-ply evaluation bot: tries every move, scores the position AFTER it with lib/eval.js,
+ * taking the expectation over every reveal outcome (what our piece turns out to be, what a captured hidden piece was).
+ * Does not look at the opponent's reply – that is the search bot's job (step 3).
  */
 (function (root) {
   'use strict';
   const E = root.JieqiBots.lib.eval;
 
-  /** Các kết cục có thể của 1 nước: [{ prob, opts }] (opts = revealAs / captureAs cho makeMove). */
+  /** Possible outcomes of a move: [{ prob, opts }] (opts = revealAs / captureAs for makeMove). */
   function outcomes(state, J, m) {
     const mover = state.board[m.from];
     const target = state.board[m.to];
@@ -22,7 +22,7 @@
     return list;
   }
 
-  /** Điểm kỳ vọng (góc nhìn `me`) sau khi đi nước m. */
+  /** Expected score (from `me`'s point of view) after playing move m. */
   function expectedScore(state, J, m, me, w) {
     let score = 0, nodes = 0;
     for (const { prob, opts } of outcomes(state, J, m)) {
@@ -45,7 +45,7 @@
       for (const m of J.getLegalMoves(state)) {
         const r = expectedScore(state, J, m, me, w);
         nodes += r.nodes;
-        const score = r.score + ctx.random() * 1e-3; // phá thế hoà điểm
+        const score = r.score + ctx.random() * 1e-3; // tie-breaker
         if (score > bestScore) { bestScore = score; best = m; }
       }
       return { move: best, info: { score: +bestScore.toFixed(2), depth: 1, nodes } };
@@ -55,7 +55,7 @@
     },
   });
 
-  // Biến thể: chỉ tính quân (không cơ động, không chiếu) – để so xem các thành phần phụ có giúp ích không
+  // Variant: material only (no mobility, no check) – to see whether the extra terms help
   root.JieqiBots.variant('eval-1ply', {
     id: 'material-1ply',
     name: 'Bot chỉ đếm quân (1 nước)',

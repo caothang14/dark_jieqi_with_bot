@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /*
- * Đấu trường bot vs bot.
+ * Bot vs bot arena.
  *
  *   node arena/arena.js --a greedy --b random --games 200
  *   node arena/arena.js --a greedy:revealBonus=0 --b greedy --games 400 --workers 8 --out results/g.json
- *   node arena/arena.js --a mybot --b greedy --tc 60+1        # đồng hồ thật 60s + 1s/nước
- *   node arena/arena.js --list                                 # liệt kê bot
+ *   node arena/arena.js --a mybot --b greedy --tc 60+1        # real clock 60s + 1s/move
+ *   node arena/arena.js --list                                 # list bots
  *
- * Mỗi seed được chơi 2 ván, A cầm Đỏ một ván và cầm Đen một ván, để công bằng về lượt đi trước.
+ * Each seed is played twice, A as Red once and as Black once, to be fair about who moves first.
  */
 'use strict';
 const path = require('path');
@@ -58,29 +58,29 @@ function parseArgs(argv) {
       case '--verbose': case '-v': args.verbose = true; break;
       case '--list': args.list = true; break;
       case '--help': case '-h': args.help = true; break;
-      default: throw new Error(`Tham số lạ: ${a}`);
+      default: throw new Error(`Unknown argument: ${a}`);
     }
   }
   return args;
 }
 
 const HELP = `
-Đấu trường bot cờ tướng úp
+Cờ tướng úp (Jieqi) bot arena
 
-  --a <bot>          bot A (spec: id hoặc id:k=v,k=v)       [bắt buộc]
-  --b <bot>          bot B                                   [bắt buộc]
-  --games, -n <N>    số ván (nên chẵn; mỗi seed chơi 2 ván đổi màu)  [100]
-  --seed <S>         seed bắt đầu                            [1]
-  --max-plies <N>    quá số nửa nước này thì xử hoà          [300]
-  --movetime <ms>    thời gian gợi ý mỗi nước (khi không --tc) [1000]
-  --tc <s+inc>       đồng hồ thật, vd 60+1 (giây); hết giờ là thua
-  --workers, -j <N>  số luồng chạy song song                 [số CPU - 1]
-  --out <file>       lưu toàn bộ ván (JSON) để replay/phân tích
-  --verbose, -v      in từng ván
-  --list             liệt kê bot đã đăng ký
+  --a <bot>          bot A (spec: id or id:k=v,k=v)          [required]
+  --b <bot>          bot B                                   [required]
+  --games, -n <N>    number of games (should be even; each seed is played twice with colours swapped)  [100]
+  --seed <S>         first seed                              [1]
+  --max-plies <N>    adjudicate a draw beyond this many plies [300]
+  --movetime <ms>    suggested time per move (without --tc)  [1000]
+  --tc <s+inc>       real clock, e.g. 60+1 (seconds); running out of time loses
+  --workers, -j <N>  number of parallel workers              [CPU count - 1]
+  --out <file>       save every game (JSON) for replay/analysis
+  --verbose, -v      print each game
+  --list             list registered bots
 `;
 
-// ── Thống kê ──
+// ── Statistics ──
 function erf(x) { // Abramowitz-Stegun
   const s = Math.sign(x); x = Math.abs(x);
   const t = 1 / (1 + 0.3275911 * x);
@@ -103,7 +103,7 @@ function summarize(records) {
     else if (res.winner === aSide) { s.w++; bucket.w++; sc = 1; }
     else { s.l++; bucket.l++; sc = 0; }
     scores.push(sc);
-    const key = res.reason + (res.winner ? (res.winner === aSide ? ' (A thắng)' : ' (B thắng)') : '');
+    const key = res.reason + (res.winner ? (res.winner === aSide ? ' (A wins)' : ' (B wins)') : '');
     s.reasons[key] = (s.reasons[key] || 0) + 1;
     s.plies += r.plies;
     for (const [side, who] of [[aSide, 'A'], [aSide === 'r' ? 'b' : 'r', 'B']]) {
@@ -124,22 +124,22 @@ function summarize(records) {
 function printSummary(sum, args) {
   const pct = (x) => (x * 100).toFixed(1) + '%';
   const wdl = (o) => `+${o.w} =${o.d} -${o.l}`;
-  const t = (x) => (x.moves ? `${(x.timeMs / x.moves).toFixed(1)}ms/nước (max ${x.maxMs.toFixed(0)}ms)` : '-')
-    + (x.depthCount ? `, độ sâu TB ${(x.depthSum / x.depthCount).toFixed(1)}` : '');
+  const t = (x) => (x.moves ? `${(x.timeMs / x.moves).toFixed(1)}ms/move (max ${x.maxMs.toFixed(0)}ms)` : '-')
+    + (x.depthCount ? `, avg depth ${(x.depthSum / x.depthCount).toFixed(1)}` : '');
   console.log('\n══════════════════════════════════════════════');
   console.log(`  A = ${args.a}`);
   console.log(`  B = ${args.b}`);
   console.log('──────────────────────────────────────────────');
-  console.log(`  Số ván        : ${sum.n}  (seed ${args.seed}…, ${args.tc ? `đồng hồ ${args.tc.initialMs / 1000}+${args.tc.incrementMs / 1000}s` : `${args.movetime}ms/nước`})`);
-  console.log(`  A thắng/hoà/thua: ${wdl(sum)}   điểm ${pct(sum.score)}`);
-  console.log(`    A cầm Đỏ    : ${wdl(sum.asRed)}`);
-  console.log(`    A cầm Đen   : ${wdl(sum.asBlack)}`);
+  console.log(`  Games         : ${sum.n}  (seed ${args.seed}…, ${args.tc ? `clock ${args.tc.initialMs / 1000}+${args.tc.incrementMs / 1000}s` : `${args.movetime}ms/move`})`);
+  console.log(`  A win/draw/loss: ${wdl(sum)}   score ${pct(sum.score)}`);
+  console.log(`    A as Red    : ${wdl(sum.asRed)}`);
+  console.log(`    A as Black  : ${wdl(sum.asBlack)}`);
   console.log(`  Elo (A - B)   : ${fmtElo(sum.elo)}   [95%: ${fmtElo(sum.eloLo)} … ${fmtElo(sum.eloHi)}]`);
-  console.log(`  LOS           : ${pct(sum.los)}  (xác suất A mạnh hơn B)`);
-  console.log(`  Ván dài TB    : ${sum.avgPlies.toFixed(0)} nửa nước`);
-  console.log(`  Thời gian A   : ${t(sum.timing.A)}`);
-  console.log(`  Thời gian B   : ${t(sum.timing.B)}`);
-  console.log('  Kết thúc do   :');
+  console.log(`  LOS           : ${pct(sum.los)}  (probability that A is stronger than B)`);
+  console.log(`  Avg length    : ${sum.avgPlies.toFixed(0)} plies`);
+  console.log(`  Time A        : ${t(sum.timing.A)}`);
+  console.log(`  Time B        : ${t(sum.timing.B)}`);
+  console.log('  Ended by      :');
   for (const [k, v] of Object.entries(sum.reasons).sort((a, b) => b[1] - a[1])) console.log(`    ${k.padEnd(28)} ${v}`);
   console.log('══════════════════════════════════════════════');
 }
@@ -149,14 +149,14 @@ async function main() {
   if (args.help) return console.log(HELP);
   if (args.list) {
     for (const b of bots.list()) {
-      console.log(`${b.id.padEnd(16)} ${b.name}${b.baseId ? `  [biến thể của ${b.baseId}]` : ''}${b.hidden ? '  [ẩn trong UI]' : ''}`);
+      console.log(`${b.id.padEnd(16)} ${b.name}${b.baseId ? `  [variant of ${b.baseId}]` : ''}${b.hidden ? '  [hidden in UI]' : ''}`);
       if (b.description) console.log(`${''.padEnd(16)} ${b.description}`);
       if (Object.keys(b.params).length) console.log(`${''.padEnd(16)} params: ${JSON.stringify(b.params)}`);
     }
     return;
   }
   if (!args.a || !args.b) { console.log(HELP); process.exit(1); }
-  bots.resolve(args.a); bots.resolve(args.b); // báo lỗi sớm nếu sai tên
+  bots.resolve(args.a); bots.resolve(args.b); // fail early on a wrong name
 
   const jobs = [];
   for (let i = 0; i < args.games; i++) {
@@ -193,8 +193,8 @@ async function main() {
         const aSide = rec.aIsRed ? 'r' : 'b';
         if (!rec.result.winner) live.d++; else if (rec.result.winner === aSide) live.w++; else live.l++;
         if (args.verbose) {
-          const res = rec.result.winner ? `${rec.result.winner === 'r' ? 'Đỏ' : 'Đen'} thắng` : 'Hoà';
-          console.log(`\n  #${rec.index} seed ${rec.seed}  Đỏ=${rec.red}  Đen=${rec.black}  → ${res} (${rec.result.reason}${rec.result.detail ? ': ' + rec.result.detail : ''}), ${rec.plies} nửa nước`);
+          const res = rec.result.winner ? `${rec.result.winner === 'r' ? 'Red' : 'Black'} wins` : 'Draw';
+          console.log(`\n  #${rec.index} seed ${rec.seed}  Red=${rec.red}  Black=${rec.black}  → ${res} (${rec.result.reason}${rec.result.detail ? ': ' + rec.result.detail : ''}), ${rec.plies} plies`);
         }
         progress();
         if (++finished === jobs.length) resolve();
@@ -205,14 +205,14 @@ async function main() {
   });
 
   records.sort((x, y) => x.index - y.index);
-  const sum = summarize(records); // dùng aIsRed (A và B có thể trùng spec)
+  const sum = summarize(records); // uses aIsRed (A and B may have the same spec)
   printSummary(sum, args);
-  console.log(`  Xong trong ${((Date.now() - started) / 1000).toFixed(1)}s với ${nWorkers} luồng.`);
+  console.log(`  Done in ${((Date.now() - started) / 1000).toFixed(1)}s with ${nWorkers} workers.`);
 
   if (args.out) {
     fs.mkdirSync(path.dirname(path.resolve(args.out)), { recursive: true });
     fs.writeFileSync(args.out, JSON.stringify({ args, summary: sum, games: records }, null, 1));
-    console.log(`  Đã lưu ${records.length} ván vào ${args.out}`);
+    console.log(`  Saved ${records.length} games to ${args.out}`);
   }
 }
 

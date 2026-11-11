@@ -1,41 +1,41 @@
 /*
- * Hàm đánh giá thế cờ dùng chung cho các bot: JieqiBots.lib.eval
+ * Position evaluation shared by the bots: JieqiBots.lib.eval
  *
  *   const E = JieqiBots.lib.eval;
- *   const w = E.resolveWeights(ctx.params);        // trọng số mặc định + ghi đè từ params
- *   E.evaluate(state, J, 'r', w)                   // điểm theo góc nhìn Đỏ (dương = Đỏ hơn)
+ *   const w = E.resolveWeights(ctx.params);        // default weights + overrides from params
+ *   E.evaluate(state, J, 'r', w)                   // score from Red's point of view (positive = Red is better)
  *   E.explain(state, J, 'r', w)                    // { score, material, mobility, check, phase, pieces: [...] }
- *   E.pieceValue(state, J, square, w)              // giá trị 1 quân (quân úp = giá trị kỳ vọng)
+ *   E.pieceValue(state, J, square, w)              // value of one piece (hidden piece = expected value)
  *
- * Ghi đè trọng số qua params (cả trong spec bot): 'eval-1ply:R.endgame=11,mobility=0,P.crossed=2.5'
+ * Override weights via params (also in a bot spec): 'eval-1ply:R.endgame=11,mobility=0,P.crossed=2.5'
  */
 (function (root) {
   'use strict';
 
   const DEFAULT_WEIGHTS = {
-    // Tốt: tâm cung mình (vướng Tướng) / chưa qua sông / đã qua sông / lụt (hàng cuối đối phương)
+    // Pawn: own palace centre (blocks the King) / not crossed / crossed the river / bottomed out (opponent's last rank)
     P: { palaceCenter: -1, home: 1, crossed: 2, bottom: 0.5 },
-    E: 1,                                              // Tượng
-    A: { single: 2, paired: 3 },                       // Sĩ; "paired" = 2 Sĩ chéo cạnh nhau, bảo vệ nhau
-    H: { opening: 3, middlegame: 4, endgame: 5 },      // Mã
-    C: { opening: 5, middlegame: 4, endgame: 3 },      // Pháo
-    R: { opening: 9.5, middlegame: 9, endgame: 10 },   // Xe
-    // Giai đoạn theo tỉ lệ quân còn trên bàn / 32
+    E: 1,                                              // Elephant
+    A: { single: 2, paired: 3 },                       // Advisor; "paired" = 2 Advisors diagonally adjacent, protecting each other
+    H: { opening: 3, middlegame: 4, endgame: 5 },      // Horse
+    C: { opening: 5, middlegame: 4, endgame: 3 },      // Cannon
+    R: { opening: 9.5, middlegame: 9, endgame: 10 },   // Rook
+    // Game phase by the ratio of pieces left on the board / 32
     phase: { openingAbove: 0.9, middlegameAbove: 0.5 },
-    hiddenBonus: 0,     // cộng thêm cho mỗi quân còn úp (giá trị "bí ẩn"), mặc định tắt
-    development: 0,     // phạt quân còn úp theo thứ tự nên lật (lib/opening.js): quân nên lật sớm (Tốt biên)
-                        // bị phạt nhiều nhất, Xe úp gần như không bị phạt. 0 = tắt
-    mobility: 0.02,     // điểm cho mỗi nước đi hợp lệ hơn đối thủ
-    check: 0.3,         // điểm khi đang chiếu đối thủ
-    win: 1000,          // điểm thắng (chiếu bí / đối thủ hết nước)
+    hiddenBonus: 0,     // bonus per piece still hidden ("mystery" value), off by default
+    development: 0,     // penalty for still-hidden pieces by reveal priority (lib/opening.js): pieces that should be revealed
+                        // early (edge Pawns) are penalised most, a hidden Rook barely at all. 0 = off
+    mobility: 0.02,     // score per legal move more than the opponent
+    check: 0.3,         // score when giving check
+    win: 1000,          // win score (checkmate / opponent has no moves)
   };
 
   const TOTAL_PIECES = 32;
 
-  // ── Trọng số ───────────────────────────────────────────────────────────
+  // ── Weights ────────────────────────────────────────────────────────────
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
 
-  /** Gộp DEFAULT_WEIGHTS với params.weights (object) và các key dạng 'R.endgame' / 'mobility' trong params. */
+  /** Merge DEFAULT_WEIGHTS with params.weights (object) and keys like 'R.endgame' / 'mobility' in params. */
   function resolveWeights(params = {}) {
     const w = clone(DEFAULT_WEIGHTS);
     const apply = (path, value) => {
@@ -60,7 +60,7 @@
     return w;
   }
 
-  // ── Giai đoạn ván ──────────────────────────────────────────────────────
+  // ── Game phase ─────────────────────────────────────────────────────────
   function piecesOnBoard(state) {
     let n = 0;
     for (const p of state.board) if (p) n++;
@@ -75,12 +75,12 @@
     return 'endgame';
   }
 
-  // ── Giá trị từng quân ──────────────────────────────────────────────────
+  // ── Piece values ───────────────────────────────────────────────────────
   const isPalaceCenter = (side, x, y) => x === 4 && y === (side === 'r' ? 8 : 1);
   const crossedRiver = (side, y) => (side === 'r' ? y <= 4 : y >= 5);
   const atBottom = (side, y) => (side === 'r' ? y === 0 : y === 9);
 
-  /** Sĩ (đã lật) của `side` ở ô chéo cạnh `sq` – ngoại trừ chính ô `sq`. */
+  /** A (revealed) Advisor of `side` diagonally adjacent to `sq` – excluding `sq` itself. */
   function hasPairedAdvisor(state, J, sq, side) {
     const x = J.X(sq), y = J.Y(sq);
     for (const [dx, dy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
@@ -92,11 +92,11 @@
     return false;
   }
 
-  /** Giá trị của quân loại `type` (đã lật) nếu đứng ở ô `sq`. */
+  /** Value of a (revealed) piece of type `type` standing on square `sq`. */
   function typeValueAt(state, J, type, side, sq, phase, w) {
     const x = J.X(sq), y = J.Y(sq);
     switch (type) {
-      case 'K': return 0; // Tướng không tính vào chênh lệch quân; mất Tướng = thua (xử lý riêng)
+      case 'K': return 0; // the King is not part of material; losing it = loss (handled separately)
       case 'P':
         if (isPalaceCenter(side, x, y)) return w.P.palaceCenter;
         if (atBottom(side, y)) return w.P.bottom;
@@ -110,12 +110,12 @@
     return 0;
   }
 
-  /** Giá trị quân ở ô `sq`. Quân úp = trung bình theo xác suất lật ra (+ hiddenBonus). */
+  /** Value of the piece on `sq`. Hidden piece = average over reveal probabilities (+ hiddenBonus). */
   function pieceValue(state, J, sq, w = DEFAULT_WEIGHTS, phase = gamePhase(state, w)) {
     const p = state.board[sq];
     if (!p) return 0;
     if (!p.hidden) return typeValueAt(state, J, p.type, p.side, sq, phase, w);
-    // Lưu ý: quân úp lật ra Sĩ thì tính như Sĩ đơn (chưa biết có cặp hay không)
+    // Note: a hidden piece revealed as an Advisor counts as a single Advisor (pairing unknown)
     let ev = 0;
     for (const [t, prob] of Object.entries(J.revealProbabilities(state, p.side))) {
       ev += prob * (t === 'A' ? w.A.single : typeValueAt(state, J, t, p.side, sq, phase, w));
@@ -123,14 +123,14 @@
     return ev + w.hiddenBonus - developmentPenalty(p, J.X(sq), w);
   }
 
-  /** Phạt quân còn úp theo hạng ưu tiên lật: hạng 1 (Tốt biên) phạt đủ `development`, hạng 9 (Xe) không phạt. */
+  /** Penalty for a still-hidden piece by reveal rank: rank 1 (edge Pawn) gets the full `development`, rank 9 (Rook) none. */
   function developmentPenalty(p, x, w) {
     if (!w.development) return 0;
     const op = root.JieqiBots.lib.opening;
     return op ? (w.development * (9 - op.hiddenRank(p, x))) / 8 : 0;
   }
 
-  /** Tổng giá trị quân của `side`. */
+  /** Total material of `side`. */
   function material(state, J, side, w = DEFAULT_WEIGHTS, phase = gamePhase(state, w)) {
     let sum = 0;
     for (let i = 0; i < state.board.length; i++) {
@@ -140,14 +140,14 @@
     return sum;
   }
 
-  // ── Đánh giá tổng ──────────────────────────────────────────────────────
+  // ── Full evaluation ────────────────────────────────────────────────────
   function mobilityCount(state, J, side) {
     return J.countPseudoMoves(state, side);
   }
 
   /**
-   * Phân tích chi tiết theo góc nhìn `side`.
-   * Nếu ván đã kết thúc (state.result) thì trả về ±win (hoà = 0).
+   * Detailed breakdown from `side`'s point of view.
+   * If the game is over (state.result), returns ±win (draw = 0).
    */
   function explain(state, J, side, w = DEFAULT_WEIGHTS) {
     const opp = J.opp(side);
@@ -173,8 +173,8 @@
     return { score, terminal: false, phase, material: mat, mobility: mob, check: chk, pieces };
   }
 
-  // ── Bản nhanh cho tìm kiếm (cùng kết quả với explain, không dựng danh sách quân) ──
-  /** Giá trị quân úp của `side` = base + pawnProb * (giá trị Tốt tại ô đó). */
+  // ── Fast version for search (same result as explain, without building the piece list) ──
+  /** Value of a hidden piece of `side` = base + pawnProb * (Pawn value on that square). */
   function hiddenStats(state, J, side, phase, w) {
     const probs = J.revealProbabilities(state, side);
     let base = w.hiddenBonus, pawnProb = 0;
@@ -185,7 +185,7 @@
     return { base, pawnProb };
   }
 
-  /** Điểm theo góc nhìn `side` (dương = `side` đang hơn). */
+  /** Score from `side`'s point of view (positive = `side` is better). */
   function evaluate(state, J, side, w = DEFAULT_WEIGHTS) {
     if (state.result) return state.result.winner == null ? 0 : state.result.winner === side ? w.win : -w.win;
     const phase = gamePhase(state, w);

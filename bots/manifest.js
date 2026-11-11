@@ -1,6 +1,6 @@
 /*
- * Danh sách file bot, nạp theo đúng thứ tự (đường dẫn tính từ thư mục bots/).
- * Thêm bot mới = tạo file trong bots/ rồi thêm tên file vào đây. UI và đấu trường đều đọc danh sách này.
+ * Bot files, loaded in exactly this order (paths relative to the bots/ folder).
+ * Adding a bot = create a file in bots/ and add its name here. Both the UI and the arena read this list.
  */
 (function (root) {
   const files = [

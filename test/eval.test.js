@@ -19,14 +19,14 @@ const put = (s, x, y, side, type) => {
   s.board[J.idx(x, y)] = { side, type, hidden: false, role: type };
   return J.idx(x, y);
 };
-const removeN = (s, n) => { // bỏ n quân không phải Tướng
+const removeN = (s, n) => { // remove n non-King pieces
   let k = 0;
   for (let i = 0; i < s.board.length && k < n; i++) if (s.board[i] && s.board[i].type !== 'K') { s.board[i] = null; k++; }
   return s;
 };
 const W = E.DEFAULT_WEIGHTS;
 
-test('giai đoạn: >90% khai cuộc, >50% trung cuộc, còn lại tàn cuộc', () => {
+test('phase: >90% opening, >50% middlegame, otherwise endgame', () => {
   assert.strictEqual(E.gamePhase(J.createGame()), 'opening');               // 32
   assert.strictEqual(E.gamePhase(removeN(J.createGame(), 3)), 'opening');   // 29 = 90.6%
   assert.strictEqual(E.gamePhase(removeN(J.createGame(), 4)), 'middlegame'); // 28 = 87.5%
@@ -34,66 +34,66 @@ test('giai đoạn: >90% khai cuộc, >50% trung cuộc, còn lại tàn cuộc'
   assert.strictEqual(E.gamePhase(removeN(J.createGame(), 16)), 'endgame');   // 16 = 50%
 });
 
-test('Tốt: tâm cung mình -1, chưa qua sông 1, qua sông 2, lụt 0.5', () => {
+test('Pawn: own palace centre -1, not crossed 1, crossed 2, bottomed out 0.5', () => {
   const s = emptyGame();
-  close(E.pieceValue(s, J, put(s, 4, 8, 'r', 'P')), -1, 'tốt đỏ tâm cung');
-  close(E.pieceValue(s, J, put(s, 0, 6, 'r', 'P')), 1, 'tốt đỏ chưa qua sông');
-  close(E.pieceValue(s, J, put(s, 2, 9, 'r', 'P')), 1, 'tốt đỏ ở hàng cuối của mình');
-  close(E.pieceValue(s, J, put(s, 2, 4, 'r', 'P')), 2, 'tốt đỏ qua sông');
-  close(E.pieceValue(s, J, put(s, 6, 0, 'r', 'P')), 0.5, 'tốt đỏ lụt');
-  close(E.pieceValue(s, J, put(s, 4, 1, 'b', 'P')), -1, 'tốt đen tâm cung');
-  close(E.pieceValue(s, J, put(s, 8, 3, 'b', 'P')), 1, 'tốt đen chưa qua sông');
-  close(E.pieceValue(s, J, put(s, 8, 5, 'b', 'P')), 2, 'tốt đen qua sông');
-  close(E.pieceValue(s, J, put(s, 1, 9, 'b', 'P')), 0.5, 'tốt đen lụt');
-  close(E.pieceValue(s, J, put(s, 4, 1, 'r', 'P')), 2, 'tốt đỏ ở tâm cung đối phương = tốt qua sông');
+  close(E.pieceValue(s, J, put(s, 4, 8, 'r', 'P')), -1, 'red pawn on palace centre');
+  close(E.pieceValue(s, J, put(s, 0, 6, 'r', 'P')), 1, 'red pawn not crossed');
+  close(E.pieceValue(s, J, put(s, 2, 9, 'r', 'P')), 1, 'red pawn on its own last rank');
+  close(E.pieceValue(s, J, put(s, 2, 4, 'r', 'P')), 2, 'red pawn crossed');
+  close(E.pieceValue(s, J, put(s, 6, 0, 'r', 'P')), 0.5, 'red pawn bottomed out');
+  close(E.pieceValue(s, J, put(s, 4, 1, 'b', 'P')), -1, 'black pawn on palace centre');
+  close(E.pieceValue(s, J, put(s, 8, 3, 'b', 'P')), 1, 'black pawn not crossed');
+  close(E.pieceValue(s, J, put(s, 8, 5, 'b', 'P')), 2, 'black pawn crossed');
+  close(E.pieceValue(s, J, put(s, 1, 9, 'b', 'P')), 0.5, 'black pawn bottomed out');
+  close(E.pieceValue(s, J, put(s, 4, 1, 'r', 'P')), 2, 'red pawn on the opponent palace centre = crossed pawn');
 });
 
-test('Tượng 1', () => {
+test('Elephant 1', () => {
   const s = emptyGame();
   close(E.pieceValue(s, J, put(s, 2, 9, 'r', 'E')), 1);
-  close(E.pieceValue(s, J, put(s, 4, 3, 'r', 'E')), 1, 'tượng đã qua sông');
+  close(E.pieceValue(s, J, put(s, 4, 3, 'r', 'E')), 1, 'elephant across the river');
 });
 
-test('Sĩ 2, sĩ giao nhau (chéo cạnh nhau) mỗi con 3', () => {
+test('Advisor 2, paired advisors (diagonally adjacent) 3 each', () => {
   let s = emptyGame();
   const a = put(s, 3, 9, 'r', 'A');
-  close(E.pieceValue(s, J, a), 2, 'sĩ đơn');
+  close(E.pieceValue(s, J, a), 2, 'single advisor');
   const b = put(s, 4, 8, 'r', 'A');
-  close(E.pieceValue(s, J, a), 3, 'sĩ giao nhau');
-  close(E.pieceValue(s, J, b), 3, 'sĩ giao nhau');
+  close(E.pieceValue(s, J, a), 3, 'paired advisors');
+  close(E.pieceValue(s, J, b), 3, 'paired advisors');
   s = emptyGame();
-  close(E.pieceValue(s, J, put(s, 3, 9, 'r', 'A')), 2, 'hai sĩ cùng hàng không bảo vệ nhau');
+  close(E.pieceValue(s, J, put(s, 3, 9, 'r', 'A')), 2, 'two advisors on the same rank do not protect each other');
   put(s, 5, 9, 'r', 'A');
   close(E.pieceValue(s, J, J.idx(3, 9)), 2);
   s = emptyGame();
   put(s, 3, 9, 'r', 'A'); put(s, 4, 8, 'b', 'A');
-  close(E.pieceValue(s, J, J.idx(3, 9)), 2, 'sĩ đối phương không tính');
+  close(E.pieceValue(s, J, J.idx(3, 9)), 2, 'opponent advisor does not count');
 });
 
-test('Mã 3/4/5, Pháo 5/4/3, Xe 9.5/9/10 theo giai đoạn', () => {
+test('Horse 3/4/5, Cannon 5/4/3, Rook 9.5/9/10 by phase', () => {
   const s = emptyGame();
   const sq = J.idx(4, 5);
   const v = (t, ph) => E.typeValueAt(s, J, t, 'r', sq, ph, W);
   assert.deepStrictEqual(['opening', 'middlegame', 'endgame'].map((ph) => v('H', ph)), [3, 4, 5]);
   assert.deepStrictEqual(['opening', 'middlegame', 'endgame'].map((ph) => v('C', ph)), [5, 4, 3]);
   assert.deepStrictEqual(['opening', 'middlegame', 'endgame'].map((ph) => v('R', ph)), [9.5, 9, 10]);
-  // bàn cờ thưa (2 Tướng + 1 Xe) là tàn cuộc
+  // sparse board (2 Kings + 1 Rook) is an endgame
   close(E.pieceValue(s, J, put(s, 0, 5, 'r', 'R')), 10);
 });
 
-test('quân úp = trung bình theo pool, chấm tại ô đang đứng', () => {
+test('hidden piece = pool average, scored on its current square', () => {
   const s = J.createGame({ seed: 1 });
-  // khai cuộc, ô Xe (0,9): A2 E1 H3 R9.5 C5 P1 → (2*2 + 2*1 + 2*3 + 2*9.5 + 2*5 + 5*1)/15
+  // opening, Rook square (0,9): A2 E1 H3 R9.5 C5 P1 → (2*2 + 2*1 + 2*3 + 2*9.5 + 2*5 + 5*1)/15
   close(E.pieceValue(s, J, J.idx(0, 9)), (4 + 2 + 6 + 19 + 10 + 5) / 15);
 });
 
-test('thế cờ đầu ván cân bằng (điểm 0 cho cả 2 bên)', () => {
+test('starting position is balanced (score 0 for both sides)', () => {
   const s = J.createGame({ seed: 3 });
   close(E.evaluate(s, J, 'r'), 0);
   close(E.evaluate(s, J, 'b'), 0);
 });
 
-test('đối xứng: điểm Đỏ = - điểm Đen', () => {
+test('symmetry: Red score = - Black score', () => {
   let s = J.createGame({ seed: 4 });
   for (let i = 0; i < 30 && !s.result; i++) {
     const ms = J.getLegalMoves(s);
@@ -102,16 +102,16 @@ test('đối xứng: điểm Đỏ = - điểm Đen', () => {
   }
 });
 
-test('ghi đè trọng số qua params', () => {
+test('override weights via params', () => {
   const w = E.resolveWeights({ 'R.endgame': 11, mobility: 0, weights: { P: { crossed: 2.5 } }, unknownKey: 1 });
   assert.strictEqual(w.R.endgame, 11);
   assert.strictEqual(w.R.opening, 9.5);
   assert.strictEqual(w.mobility, 0);
   assert.strictEqual(w.P.crossed, 2.5);
-  assert.strictEqual(W.R.endgame, 10, 'không sửa mặc định');
+  assert.strictEqual(W.R.endgame, 10, 'defaults are not modified');
 });
 
-test('ván kết thúc: thắng +1000, thua -1000', () => {
+test('game over: win +1000, loss -1000', () => {
   let s = emptyGame();
   s.board = s.board.map(() => null);
   put(s, 4, 0, 'b', 'K'); put(s, 3, 9, 'r', 'K'); put(s, 0, 1, 'r', 'R'); put(s, 8, 2, 'r', 'R');
@@ -120,12 +120,12 @@ test('ván kết thúc: thắng +1000, thua -1000', () => {
   assert.strictEqual(E.evaluate(s, J, 'b'), -1000);
 });
 
-test('bot không ăn Tốt đang chắn tâm cung đối phương', async () => {
+test('bot does not capture a Pawn blocking the opponent palace centre', async () => {
   const s = emptyGame();
   s.board = s.board.map(() => null);
   put(s, 4, 0, 'b', 'K'); put(s, 3, 9, 'r', 'K');
-  put(s, 4, 1, 'b', 'P');       // tốt đen chắn tâm cung đen (-1 cho Đen)
-  put(s, 4, 5, 'r', 'R');       // xe đỏ có thể ăn tốt này
+  put(s, 4, 1, 'b', 'P');       // black pawn blocks black's palace centre (-1 for Black)
+  put(s, 4, 5, 'r', 'R');       // red rook can capture this pawn
   put(s, 0, 3, 'b', 'P'); put(s, 8, 3, 'b', 'P');
   s.pools = { r: {}, b: {} };
   const ctx = { side: 'r', random: () => 0.5, now: Date.now };

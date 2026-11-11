@@ -66,9 +66,9 @@ test('flying general: moving the only blocker off the file is illegal', () => {
   const s = emptyGame();
   put(s, 4, 9, 'r', 'K'); put(s, 4, 0, 'b', 'K'); put(s, 4, 5, 'r', 'R');
   const t = J.getLegalMovesFrom(s, J.idx(4, 5)).map((m) => J.X(m.to));
-  assert.ok(t.length > 0 && t.every((x) => x === 4), 'xe chỉ được đi dọc cột e');
+  assert.ok(t.length > 0 && t.every((x) => x === 4), 'rook may only move along file e');
   s.board[J.idx(4, 5)] = null;
-  assert.ok(J.isInCheck(s, 'r') && J.isInCheck(s, 'b'), 'hai tướng đối mặt = bị chiếu');
+  assert.ok(J.isInCheck(s, 'r') && J.isInCheck(s, 'b'), 'facing kings = in check');
 });
 
 test('fast attack detection matches slow version (random games)', () => {
@@ -93,10 +93,10 @@ test('fast attack detection matches slow version (random games)', () => {
 
 test('captureUnknown removes a hidden piece without drawing from the pool', () => {
   let s = J.createGame({ seed: 2 });
-  const from = J.idx(1, 7), to = J.idx(1, 0); // pháo đỏ (úp) ăn quân úp ở ô Mã đen
+  const from = J.idx(1, 7), to = J.idx(1, 0); // red (hidden) cannon captures the hidden piece on black's Horse square
   s = J.makeMove(s, { from, to }, { revealAs: 'C', captureUnknown: true });
   assert.strictEqual(s.lastMove.captured.type, null);
-  assert.strictEqual(Object.values(s.pools.b).reduce((a, b) => a + b, 0), 15, 'pool đen giữ nguyên');
+  assert.strictEqual(Object.values(s.pools.b).reduce((a, b) => a + b, 0), 15, 'black pool unchanged');
 });
 
 test('checkmate detected', () => {
