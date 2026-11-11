@@ -1,3 +1,6 @@
 node_modules/
 results/
 .DS_Store
+
+# Ghi chú riêng cho Claude (có rule bot chưa muốn public)
+CLAUDE.md

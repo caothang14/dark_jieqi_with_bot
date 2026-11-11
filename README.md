@@ -20,7 +20,32 @@ npm test
 - Sĩ/Tượng đã lật được đi khắp bàn (Sĩ đi chéo 1 ô, Tượng đi chéo 2 ô, vẫn bị chặn mắt).
 - Ăn quân úp thì lộ ra quân đó là gì.
 - Có luật lộ mặt tướng, không được tự đi vào thế bị chiếu, hết nước đi là thua.
-- Hoà khi đi 120 nửa nước liền không ăn quân, không lật quân.
+- Hoà khi 60 hiệp (120 nửa nước) liên tiếp không bên nào ăn quân hay lật quân (自然限着).
+- Lặp nước theo **luật Trung Quốc** (xem dưới).
+
+### Lặp nước (luật Trung Quốc – 中国象棋竞赛规则)
+
+Khi một thế cờ xuất hiện **lần thứ 3** (cùng vị trí quân, cùng lượt đi), engine xét các nước của mỗi bên trong vòng lặp:
+
+| Loại nước | Nghĩa |
+|---|---|
+| Chiếu (将) | Chiếu Tướng |
+| Doạ bí (杀) | Nếu đối phương bỏ lượt thì có nước chiếu bí ngay |
+| Bắt (捉) | Tạo mới một nước ăn quân **có lợi**: quân bị bắt không có căn thật (không ăn lại được), hoặc đáng giá hơn quân bắt (vd Mã/Pháo bắt Xe dù Xe có căn) |
+| Nhàn (闲) | Mọi nước khác: đề nghị đổi quân (兑), hiến, chặn, đi theo… |
+
+Không tính là bắt: Tướng hoặc Tốt đi bắt quân; bắt Tốt chưa qua sông; bắt quân có căn thật cùng giá trị (= đổi quân).
+
+**Phạm luật (禁止着法)**: một bên mà *mọi* nước trong vòng lặp đều là chiếu / doạ bí / bắt, không có nước nhàn nào – gồm chiếu dai (长将), doạ bí dai (长杀), đuổi bắt dai (长捉), và các kiểu xen kẽ 一将一捉, 一将一杀, 一杀一捉 (luật châu Á chỉ cấm chiếu dai và đuổi bắt dai; luật Trung Quốc cấm cả các kiểu xen kẽ).
+**Được phép**: có xen ít nhất một nước nhàn (一将一闲, 数将一闲, 一捉一闲…).
+
+**Phân xử – bắt đổi nước**: chiếu dai là vi phạm nặng nhất. Bên vi phạm nặng hơn là bên phạm luật: nước nào của bên đó làm thế cờ xuất hiện lần thứ 3 thì **không được đi** (`getLegalMoves` tự loại, `makeMove` báo `Illegal move`) – phải đổi nước. Nếu bên phạm luật không còn nước nào khác thì **thua**. Hai bên vi phạm ngang nhau hoặc không ai vi phạm → lặp lần thứ 3 thì **hoà**. Vd: một bên chiếu dai, bên kia chạy Tướng nhưng vẫn giữ thế doạ bí → bên chiếu dai phải đổi nước.
+
+Trên UI: lặp lần 2 thì cảnh báo bên đang phạm luật; nước bị cấm hiện dấu ✕ đỏ, bấm vào để xem lý do. Bot tìm kiếm hiểu luật này và tự tránh chiếu dai/đuổi dai khi mình là bên phạm luật (kể cả trước khi bị cấm hẳn). Các nước bị cấm và lý do: `Jieqi.forbiddenMoves(state)`.
+
+Tuỳ chỉnh khi tạo ván: `Jieqi.createGame({ rules: { repetition: 'chinese' | 'none', repetitionCount: 3, naturalLimit: 120 } })`. Phân tích một thế cờ lặp: `Jieqi.repetitionStatus(state)`.
+
+Đơn giản hoá so với luật đầy đủ (có thể bổ sung sau): chưa xét ngoại lệ "ăn quân xong bị chiếu bí ngay thì không tính là bắt"; quân úp bị bắt được coi giá trị 3; nước doạ bí không xét quân úp.
 
 ## Đồng hồ
 
@@ -51,11 +76,13 @@ npm test
 | `bots/manifest.js` | Danh sách file bot – **thêm bot mới chỉ cần sửa file này** |
 | `bots/lib/common.js` | Helper dùng chung (giá trị quân đơn giản, chọn ngẫu nhiên…) |
 | `bots/lib/eval.js` | Hàm đánh giá thế cờ (giá trị quân theo giai đoạn, cơ động, chiếu) |
+| `bots/lib/opening.js` | Thứ tự ưu tiên khi lật quân úp |
 | `bots/random.js`, `bots/greedy.js`, `bots/eval1.js`, `bots/search.js` | Các bot: ngẫu nhiên, tham ăn, đánh giá 1 nước, tìm kiếm nhiều nước |
 | `bots/index.js` | Nạp toàn bộ bot trong Node |
 | `arena/match.js` | Chơi 1 ván bot vs bot, replay ván từ record |
 | `arena/arena.js` | Đấu trường: chạy song song nhiều ván, thống kê Elo |
-| `test/` | Test luật, bot, đấu trường (`npm test`) |
+| `arena/bench.js` | Đo tốc độ engine/bot, perft để phát hiện thay đổi luật |
+| `test/` | Test luật (kể cả lặp nước), bot, đấu trường (`npm test`) |
 
 ## API engine (để viết bot)
 
@@ -154,10 +181,13 @@ Bot dùng hàm này: `eval-1ply` (đầy đủ) và `material-1ply` (chỉ tính
 Nhìn trước nhiều nước:
 
 - **Alpha-beta (negamax)**: thử nước của mình, nước đáp của đối thủ…, cắt các nhánh chắc chắn kém.
-- **Nút may rủi khi lật quân**: nước lật quân được tính bằng trung bình có trọng số theo xác suất từng loại quân lật ra (expectimax, cắt nhánh kiểu Star1). Ăn quân úp thì *không* tách nhánh: bàn cờ sau khi ăn giống nhau với mọi danh tính, và giữ nguyên pool cho đúng xác suất kỳ vọng (`makeMove(..., { captureUnknown: true })`).
-- **Quiescence**: hết độ sâu mà còn nước ăn quân thì tìm tiếp các nước ăn (thấy được "ăn rồi bị ăn lại"); đang bị chiếu thì xét đủ nước thoát chiếu (2 nửa nước đầu). Quân úp chỉ được ăn ở nửa nước đầu của quiescence, kèm delta pruning – để cây không bùng nổ.
-- **Sắp xếp nước**: ăn quân đắt bằng quân rẻ trước (MVV-LVA), rồi đến nước từng gây cắt nhánh (history).
-- **Đào sâu dần** theo thời gian (1, 2, 3… đến khi hết giờ); hết giờ giữa chừng vẫn dùng được kết quả của vòng trước.
+- **Nút may rủi khi lật quân** (expectimax): nước lật quân được tính bằng trung bình theo xác suất từng loại quân lật ra. Cắt nhánh kiểu **Star2**: thăm dò rẻ trước để có cận trên cho từng kết cục (ở quiescence chính là điểm đứng yên của đối thủ), nếu tổng có trọng số đã kém hơn nước tốt nhất thì bỏ luôn, không cần tìm kỹ. Kết quả *giống hệt* khi không thăm dò (có test), nhưng ít nút hơn ~14 lần.
+- Ăn quân úp thì *không* tách nhánh: bàn cờ sau khi ăn giống nhau với mọi danh tính, giữ nguyên pool cho đúng xác suất kỳ vọng (`makeMove(..., { captureUnknown: true })`).
+- **Quiescence**: hết độ sâu mà còn nước ăn quân thì tìm tiếp các nước ăn; đang bị chiếu thì xét đủ nước thoát chiếu (2 nửa nước đầu). Quân úp chỉ được ăn ở nửa nước đầu, kèm delta pruning.
+- **Bảng ghi nhớ** (Zobrist hash, tính cả pool quân úp): dùng lại kết quả thế cờ đã tính, thử nước tốt nhất cũ trước.
+- **Sắp xếp nước**: nước tốt nhất từ bảng ghi nhớ → ăn quân (MVV-LVA) → nước sát thủ (killer) → history.
+- **LMR**: nước thường xếp sau được tìm nông hơn 1 nước; tốt bất ngờ thì tìm lại đủ sâu. **Null move** từ độ sâu 3.
+- **Đào sâu dần** theo thời gian; hết giờ giữa chừng vẫn dùng được kết quả của vòng trước.
 
 | Bot | Phong cách |
 |---|---|
@@ -165,17 +195,59 @@ Nhìn trước nhiều nước:
 | `search-fast` | Tối đa 0,3 giây/nước |
 | `search-midgame` | Đi nhanh khai cuộc, dành gấp 2,5 lần thời gian cho trung cuộc |
 | `search-endgame` | Đánh giá cao Mã/Xe/Tốt qua sông ở tàn cuộc, nghĩ lâu hơn khi vào tàn cuộc |
+| `search-v3`, `search-v4` | Bản bước 3 / bước 4 (trước khi có ưu tiên lật quân), ẩn khỏi UI – chỉ để làm mốc so sánh |
 
-Tham số chính: `depth` (cố định độ sâu – tái lập được), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, cùng mọi trọng số của hàm đánh giá. Ví dụ: `--a search:depth=2`, `--a search:maxTimeMs=500,R.endgame=11`.
+Tham số: `depth` (cố định độ sâu – tái lập được), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, `probe`, `tt`, `lmr`, `nullMove`, `pvs`… cùng mọi trọng số của hàm đánh giá. Ví dụ: `--a search:depth=3`, `--a search:lmr=false --b search`.
 
-**Kết quả** (40 ván, 0,5 giây/nước): `search` thắng `greedy` **92,5%** (+37 =0 -3), ván trung bình 44 nửa nước.
+### Ưu tiên khi lật quân (`bots/lib/opening.js`)
 
-**Giới hạn hiện tại**: ở khai cuộc (nhiều quân úp, nước nào cũng lật quân) bot chỉ kịp tính ~1–2 nước trong 0,5 giây, nên có thể lọt đòn chiếu bí bằng nước đi thường. Trung/tàn cuộc đạt 3–4 nước. Bot chạy trên luồng chính nên UI đứng hình trong lúc bot nghĩ. Bước 4 (tăng tốc engine) và bước 5 (Web Worker) sẽ xử lý.
+Thứ tự nên lật quân úp theo kinh nghiệm người chơi, áp dụng suốt lúc còn quân úp:
+
+1. Tốt úp cột biên (a, i) → 2. Tốt úp cột 3, 7 → 3. Tốt úp cột giữa → 4. Sĩ úp vào tâm cung, Tượng úp vào giữa → 5. Mã úp → 6. Tượng úp ra biên → 7. Pháo úp tiến thẳng → 8. Pháo úp đi ngang/lùi → 9. Xe úp.
+
+Bot dùng bảng này theo 2 cách (mặc định bật):
+
+- **Sắp thứ tự** (`openingOrder`): nước lật quân được thử theo thứ tự trên.
+- **Bỏ bớt** (`revealTopKRoot=8`, `revealTopK=4`): ở gốc chỉ xét 8 nước lật đứng đầu bảng, ở các tầng dưới chỉ 4. Nước ăn quân, nước của quân đã lật và khi đang bị chiếu thì luôn xét đủ. "Không lật vào mồm quân địch" do tìm kiếm tự thấy.
+
+Tuỳ chọn thứ 3, `development` (vd `0.3`): điểm thưởng trong hàm đánh giá cho việc lật đúng thứ tự – mặc định tắt vì không giúp thêm.
+
+Kết quả (30 ván mỗi phương án, 0,5 giây/nước, so với bản trước – `search-v4`):
+
+| Phương án | Điểm | Elo |
+|---|---|---|
+| Chỉ sắp thứ tự | 48,3% | ≈ 0 |
+| **Sắp thứ tự + bỏ bớt (mặc định)** | **68,3% (+20 =1 −9)** | **+134** |
+| + điểm thưởng `development=0.3` | 66,7% | +120 |
+
+Thế cờ đầu ván: tìm sâu 3 từ 9 giây xuống 1,5 giây; với 2 giây/nước bot đạt độ sâu 3 ngay từ nước đầu (trước đây là 2).
+
+### Tiến độ (đo bằng đấu trường, 0,3 giây/nước)
+
+| Mốc | Kết quả |
+|---|---|
+| Bước 3: `search-v3` vs `greedy` | 92,5% (0,5 giây/nước) |
+| Bước 4: `search` vs `search-v3` | **85% (+31 =6 −3), +301 Elo**; độ sâu TB 4,3 so với 2,5 |
+| Bước 4: `search` vs `greedy` | **100% (30/30 ván)** |
+
+### Tối ưu ở bước 4
+
+| | Trước | Sau |
+|---|---|---|
+| Sinh nước hợp lệ | 110 µs | 11 µs (kiểm tra chiếu dò ngược từ Tướng, đi thử/huỷ ngay trên bàn, không cấp phát bộ nhớ) |
+| Kiểm tra chiếu | 2,9 µs | 0,6 µs |
+| Tìm sâu 2 (6 thế cờ) | 26 giây, 1 triệu nút | 0,9 giây, 71 nghìn nút |
+| Độ sâu trong 0,5 giây | 1–4 | 2–6 |
+
+Đo lại: `npm run bench` (hoặc `node arena/bench.js search:lmr=false 1,2,3`). `perft(3)` trong bench phải giữ nguyên sau mỗi lần tối ưu engine – đổi tức là luật đã bị thay đổi ngoài ý muốn.
+
+**Còn hạn chế**: thế cờ đầu ván (hoàn toàn cân bằng, nước nào cũng lật quân) vẫn chỉ đạt độ sâu 2 trong ~1 giây. Bot chạy trên luồng chính nên UI đứng hình trong lúc bot nghĩ (bước 5: Web Worker).
 
 ## Đấu trường (bot vs bot)
 
 ```bash
 npm run bots                                          # liệt kê bot
+npm run bench                                         # đo tốc độ engine + bot
 npm run arena -- --a greedy --b random --games 200
 npm run arena -- --a greedy:revealBonus=0 --b greedy -n 400 -j 8 --out results/test.json
 npm run arena -- --a my-bot --b greedy --tc 60+1      # đồng hồ thật 60s + 1s/nước, hết giờ là thua
@@ -187,7 +259,7 @@ npm run arena -- --a my-bot --b greedy --tc 60+1      # đồng hồ thật 60s 
 - Quá `--max-plies` (mặc định 300) ⇒ xử hoà.
 - `--out` lưu toàn bộ ván (seed + nước đi); dựng lại bằng `replay(J, record)` trong `arena/match.js`.
 
-Mốc tham khảo hiện tại: `greedy` vs `random` ≈ 95% điểm; `search` vs `greedy` ≈ 92,5%.
+Mốc tham khảo: `greedy` vs `random` ≈ 95%; `search-v3` vs `greedy` ≈ 92,5%; `search` vs `search-v3` ≈ 85%.
 
 ## Mã nguồn mở tham khảo
 

@@ -1,11 +1,12 @@
 {
   "name": "cotuong-up",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Cờ tướng úp (Jieqi) – local board, pluggable bots, bot arena",
   "scripts": {
-    "test": "node test/engine.test.js && node test/eval.test.js && node test/bots.test.js && node test/search.test.js",
+    "test": "node test/engine.test.js && node test/rules.test.js && node test/eval.test.js && node test/bots.test.js && node test/search.test.js && node test/opening.test.js",
     "arena": "node arena/arena.js",
-    "bots": "node arena/arena.js --list"
+    "bots": "node arena/arena.js --list",
+    "bench": "node arena/bench.js"
   },
   "license": "MIT"
 }

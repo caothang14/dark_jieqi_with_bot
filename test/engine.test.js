@@ -62,6 +62,43 @@ test('flying general is illegal', () => {
   assert.ok(!t.includes('d0'));
 });
 
+test('flying general: moving the only blocker off the file is illegal', () => {
+  const s = emptyGame();
+  put(s, 4, 9, 'r', 'K'); put(s, 4, 0, 'b', 'K'); put(s, 4, 5, 'r', 'R');
+  const t = J.getLegalMovesFrom(s, J.idx(4, 5)).map((m) => J.X(m.to));
+  assert.ok(t.length > 0 && t.every((x) => x === 4), 'xe chỉ được đi dọc cột e');
+  s.board[J.idx(4, 5)] = null;
+  assert.ok(J.isInCheck(s, 'r') && J.isInCheck(s, 'b'), 'hai tướng đối mặt = bị chiếu');
+});
+
+test('fast attack detection matches slow version (random games)', () => {
+  const { isSquareAttackedSlow, kingsFacing } = J._debug;
+  for (let g = 0; g < 30; g++) {
+    let s = J.createGame({ seed: 1000 + g });
+    let r = g + 1;
+    while (!s.result && s.ply < 150) {
+      for (let sq = 0; sq < 90; sq++) {
+        const p = s.board[sq];
+        if (!p) continue;
+        const by = J.opp(p.side);
+        const slow = isSquareAttackedSlow(s.board, sq, by) || (p.type === 'K' && kingsFacing(s.board));
+        assert.strictEqual(J.isSquareAttacked(s.board, sq, by), slow, `game ${g} ply ${s.ply} sq ${J.squareName(sq)}`);
+      }
+      const moves = J.getLegalMoves(s);
+      r = (r * 1103515245 + 12345) >>> 0;
+      s = J.makeMove(s, moves[r % moves.length]);
+    }
+  }
+});
+
+test('captureUnknown removes a hidden piece without drawing from the pool', () => {
+  let s = J.createGame({ seed: 2 });
+  const from = J.idx(1, 7), to = J.idx(1, 0); // pháo đỏ (úp) ăn quân úp ở ô Mã đen
+  s = J.makeMove(s, { from, to }, { revealAs: 'C', captureUnknown: true });
+  assert.strictEqual(s.lastMove.captured.type, null);
+  assert.strictEqual(Object.values(s.pools.b).reduce((a, b) => a + b, 0), 15, 'pool đen giữ nguyên');
+});
+
 test('checkmate detected', () => {
   let s = emptyGame();
   put(s, 4, 0, 'b', 'K');

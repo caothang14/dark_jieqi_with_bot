@@ -149,7 +149,7 @@ async function main() {
   if (args.help) return console.log(HELP);
   if (args.list) {
     for (const b of bots.list()) {
-      console.log(`${b.id.padEnd(16)} ${b.name}${b.baseId ? `  [biến thể của ${b.baseId}]` : ''}`);
+      console.log(`${b.id.padEnd(16)} ${b.name}${b.baseId ? `  [biến thể của ${b.baseId}]` : ''}${b.hidden ? '  [ẩn trong UI]' : ''}`);
       if (b.description) console.log(`${''.padEnd(16)} ${b.description}`);
       if (Object.keys(b.params).length) console.log(`${''.padEnd(16)} params: ${JSON.stringify(b.params)}`);
     }

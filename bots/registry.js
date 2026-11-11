@@ -10,6 +10,7 @@
  *     chooseMove(state, J, ctx) { ... },  // BẮT BUỘC. Trả về {from,to} hoặc { move:{from,to}, info:{ score, depth, nodes, pv } }
  *                                         // Có thể trả về Promise (Web Worker, gọi HTTP tới service bot...)
  *     acceptDraw(state, J, ctx) { ... },  // tuỳ chọn, trả về boolean (hoặc Promise<boolean>)
+ *     hidden: true,                       // tuỳ chọn: không hiện trong UI (bot tham chiếu cho đấu trường)
  *   });
  *
  * ── Biến thể (cùng thuật toán, khác tham số) ───────────────────────────────────────
@@ -43,12 +44,12 @@
     return def;
   }
 
-  function variant(baseId, { id, name, description, params }) {
+  function variant(baseId, { id, name, description, params, hidden }) {
     const base = defs.get(baseId);
     if (!base) throw new Error(`Không có bot gốc: ${baseId}`);
     return register({
       ...base, id, name: name || id, description: description || base.description,
-      params: { ...base.params, ...params }, baseId,
+      params: { ...base.params, ...params }, baseId, hidden: !!hidden,
     });
   }
 

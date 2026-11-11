@@ -23,6 +23,8 @@
     // Giai đoạn theo tỉ lệ quân còn trên bàn / 32
     phase: { openingAbove: 0.9, middlegameAbove: 0.5 },
     hiddenBonus: 0,     // cộng thêm cho mỗi quân còn úp (giá trị "bí ẩn"), mặc định tắt
+    development: 0,     // phạt quân còn úp theo thứ tự nên lật (lib/opening.js): quân nên lật sớm (Tốt biên)
+                        // bị phạt nhiều nhất, Xe úp gần như không bị phạt. 0 = tắt
     mobility: 0.02,     // điểm cho mỗi nước đi hợp lệ hơn đối thủ
     check: 0.3,         // điểm khi đang chiếu đối thủ
     win: 1000,          // điểm thắng (chiếu bí / đối thủ hết nước)
@@ -118,7 +120,14 @@
     for (const [t, prob] of Object.entries(J.revealProbabilities(state, p.side))) {
       ev += prob * (t === 'A' ? w.A.single : typeValueAt(state, J, t, p.side, sq, phase, w));
     }
-    return ev + w.hiddenBonus;
+    return ev + w.hiddenBonus - developmentPenalty(p, J.X(sq), w);
+  }
+
+  /** Phạt quân còn úp theo hạng ưu tiên lật: hạng 1 (Tốt biên) phạt đủ `development`, hạng 9 (Xe) không phạt. */
+  function developmentPenalty(p, x, w) {
+    if (!w.development) return 0;
+    const op = root.JieqiBots.lib.opening;
+    return op ? (w.development * (9 - op.hiddenRank(p, x))) / 8 : 0;
   }
 
   /** Tổng giá trị quân của `side`. */
@@ -189,7 +198,8 @@
       let v;
       if (p.hidden) {
         const h = hs[p.side] || (hs[p.side] = hiddenStats(state, J, p.side, phase, w));
-        v = h.base + (h.pawnProb ? h.pawnProb * typeValueAt(state, J, 'P', p.side, i, phase, w) : 0);
+        v = h.base + (h.pawnProb ? h.pawnProb * typeValueAt(state, J, 'P', p.side, i, phase, w) : 0)
+          - (w.development ? developmentPenalty(p, i % 9, w) : 0);
       } else {
         v = typeValueAt(state, J, p.type, p.side, i, phase, w);
       }

@@ -22,7 +22,15 @@
     checkmate: 'chiếu bí', stalemate: 'hết nước đi', timeout: 'hết giờ',
     resign: 'đối thủ chịu thua', agreement: 'hai bên đồng ý hoà',
     'illegal-move': 'đối thủ đi nước không hợp lệ', 'bot-error': 'bot đối thủ bị lỗi',
-    'quiet-limit': 'quá 120 nước không ăn/lật quân',
+    'quiet-limit': '60 hiệp không ăn quân',
+    repetition: 'lặp nước, không bên nào phạm luật',
+  };
+  // Lý do thua do lặp nước (luật Trung Quốc) – ghi theo bên phạm luật
+  const VIOLATION_VI = {
+    'perpetual-check': 'chiếu dai',
+    'perpetual-chase': 'đuổi bắt dai',
+    'perpetual-mate-threat': 'doạ bí dai',
+    'perpetual-attack': 'tấn công dai (chiếu/bắt/doạ bí xen kẽ)',
   };
   const LOW_TIME_MS = 10000;
 
@@ -155,6 +163,21 @@
         d.addEventListener('click', (e) => { e.stopPropagation(); doMove(m); });
         layer.appendChild(d);
       }
+      // nước bị cấm do luật lặp (bắt đổi nước): hiện dấu ✕, bấm vào để xem lý do
+      if (!result && J.forbiddenMoves) {
+        for (const f of J.forbiddenMoves(s).filter((x) => x.from === selected)) {
+          const d = document.createElement('div');
+          d.className = 'dot forbidden';
+          d.textContent = '✕';
+          d.title = 'Nước bị cấm (luật lặp nước)';
+          place(d, f.to);
+          d.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toast(`Không được đi: nước này lặp thế cờ lần thứ ${s.rules.repetitionCount} trong khi ${SIDE_VI[s.turn]} đang ${VIOLATION_VI[f.violation] || 'phạm luật lặp'}. Luật Trung Quốc buộc phải đổi nước.`);
+          });
+          layer.appendChild(d);
+        }
+      }
     }
     renderPanel(s, result, checkSq >= 0);
     renderClocks();
@@ -178,8 +201,10 @@
     const st = $('status');
     if (result) {
       st.className = 'status over';
-      const reason = result.reason === 'resign'
-        ? `${SIDE_VI[J.opp(result.winner)]} chịu thua` : REASON_VI[result.reason];
+      const loser = result.winner && SIDE_VI[J.opp(result.winner)];
+      const reason = result.reason === 'resign' ? `${loser} chịu thua`
+        : VIOLATION_VI[result.reason] ? `${loser} ${VIOLATION_VI[result.reason]}${result.detail === 'no-other-move' ? ', không còn nước nào khác' : ''} – luật lặp nước`
+          : REASON_VI[result.reason] || result.reason;
       st.textContent = result.winner
         ? `${SIDE_VI[result.winner]} thắng (${reason})`
         : `Hoà (${REASON_VI[result.reason]})`;
@@ -339,6 +364,23 @@
     render();
   }
 
+  /** Thế cờ vừa lặp lại: nếu có bên đang phạm luật thì cảnh báo trước khi bị xử thua. */
+  function warnRepetition(state) {
+    if (state.result) { toastText = ''; return; }
+    if (!J.repetitionStatus) return;
+    const st = J.repetitionStatus(state);
+    if (!st) return;
+    const left = state.rules.repetitionCount - st.count;
+    const loser = st.result.winner && J.opp(st.result.winner);
+    if (loser) {
+      toast(left > 0
+        ? `Cảnh báo: ${SIDE_VI[loser]} đang ${VIOLATION_VI[st.violators[loser]]}. Đến lần lặp thứ ${state.rules.repetitionCount}, ${SIDE_VI[loser]} sẽ bị buộc đổi nước.`
+        : `${SIDE_VI[loser]} đang ${VIOLATION_VI[st.violators[loser]]}: không được lặp tiếp, phải đổi nước.`);
+    } else {
+      toast(`Thế cờ lặp lại (lần ${st.count}). Lặp thêm ${left} lần nữa sẽ xử hoà.`);
+    }
+  }
+
   function doMove(m, info = null) {
     if (gameResult()) return;
     const mover = current().turn;
@@ -349,6 +391,7 @@
     clockSnaps.push(clock.snapshot());
     if (next.result) clock.stop();
     selected = -1;
+    warnRepetition(next);
     render();
     maybeBotMove();
   }
@@ -444,7 +487,7 @@
 
   // ---------- Init ----------
   for (const id of ['playerR', 'playerB']) {
-    for (const bot of Bots.list()) {
+    for (const bot of Bots.list().filter((b) => !b.hidden)) {
       const o = document.createElement('option');
       o.value = bot.id;
       o.textContent = bot.name;
@@ -479,6 +522,19 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') undo();
     if (e.key === ' ' && e.target === document.body) { e.preventDefault(); togglePause(); }
   });
+
+  // API nhỏ cho test / tính năng sau này (mở thế cờ, xem lại ván): nạp một state bất kỳ làm thế cờ hiện tại
+  window.CotuongUI = {
+    load(state) {
+      newGame();
+      history = [state];
+      botInfos = [null];
+      render();
+      maybeBotMove();
+    },
+    current: () => current(),
+    play(move) { doMove(move); },
+  };
 
   drawGrid();
   newGame();

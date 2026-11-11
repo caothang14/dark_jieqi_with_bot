@@ -174,3 +174,10 @@ button.danger { background: #a32a1f; }
   background: #fff; color: #333; border-radius: 6px; padding: 0 3px; box-shadow: 0 1px 2px rgba(0,0,0,.3);
 }
 .piece .val.neg { background: #ffd9d6; }
+
+/* ---------- Nước bị cấm (luật lặp) ---------- */
+.dot.forbidden {
+  width: 5%; background: transparent; color: #c62828; opacity: .85;
+  font: 700 clamp(12px, 2.6vw, 18px)/1 system-ui, sans-serif;
+  display: grid; place-items: center;
+}

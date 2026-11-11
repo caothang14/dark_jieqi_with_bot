@@ -57,6 +57,47 @@ test('tôn trọng giới hạn thời gian', async () => {
   assert.ok(J.getLegalMoves(s).some((m) => m.from === r.move.from && m.to === r.move.to));
 });
 
+test('Star2 (thăm dò ở nút may rủi) cho đúng cùng điểm với khi không thăm dò', async () => {
+  for (let g = 0; g < 4; g++) {
+    let s = J.createGame({ seed: 40 + g });
+    for (let i = 0; i < g * 10 && !s.result; i++) { const ms = J.getLegalMoves(s); s = J.makeMove(s, ms[(i * 7 + g) % ms.length]); }
+    const base = 'search:depth=2,tt=false,lmr=false,nullMove=false';
+    const a = await think(base + ',probe=true', s);
+    const b = await think(base + ',probe=false', s);
+    assert.strictEqual(a.info.score, b.info.score, `seed ${40 + g}`);
+    assert.ok(a.info.nodes <= b.info.nodes, 'thăm dò phải giảm số nút');
+  }
+});
+
+test('hồi quy: không bỏ qua nước ăn Xe khi quân lật chạm đúng cận thăm dò', async () => {
+  // Đỏ dùng Pháo (úp) ăn quân úp ở ô Mã đen và lật ra Xe ở b9; Đen phải ăn lại Xe bằng quân ở a9
+  let s = J.createGame({ seed: 15 });
+  s = J.makeMove(s, { from: J.idx(1, 7), to: J.idx(1, 0) }, { revealAs: 'R', captureAs: 'H' });
+  for (const spec of ['search:depth=1', 'search:depth=2']) {
+    const r = await think(spec, s);
+    assert.strictEqual(name(r.move), 'a9→b9', spec);
+  }
+});
+
+test('luật lặp: bot không chiếu dai khi mình là bên phạm luật', async () => {
+  // Đen doạ bí (Xe a1 khoá hàng 1, Xe h5 chờ xuống hàng 0). Đỏ cầm cự bằng Xe chiếu Tướng d9 ↔ d8.
+  let s = board([[3, 0, 'b', 'K'], [4, 9, 'r', 'K'], [8, 2, 'r', 'R'], [0, 8, 'b', 'R'], [7, 5, 'b', 'R'], [0, 6, 'r', 'P']]);
+  s.k1 = null; s.key = J.positionKey(s); s.rep = { key: s.key, from: -1, to: -1, prev: null, len: 1 };
+  const cycle = [[8, 2, 8, 0], [3, 0, 3, 1], [8, 0, 8, 1], [3, 1, 3, 0]];
+  for (const [a, b, c, d] of cycle) s = J.makeMove(s, { from: J.idx(a, b), to: J.idx(c, d) });
+  // Sau 1 vòng: chiếu tiếp i8→i9 vẫn hợp lệ (lặp lần 2). Bot không hiểu luật thì chiếu tiếp,
+  // bot hiểu luật biết vòng sau sẽ bị buộc đổi nước nên đổi ngay.
+  assert.strictEqual(name((await think('search:depth=2,repetition=false', s)).move), 'i8→i9');
+  for (const spec of ['search:depth=2', 'search:depth=3']) {
+    assert.notStrictEqual(name((await think(spec, s)).move), 'i8→i9', spec);
+  }
+  // Sau 2 vòng: nước chiếu lặp lần 3 bị cấm hẳn
+  for (const [a, b, c, d] of [[8, 1, 8, 0], [3, 0, 3, 1], [8, 0, 8, 1], [3, 1, 3, 0]]) s = J.makeMove(s, { from: J.idx(a, b), to: J.idx(c, d) });
+  assert.deepStrictEqual(J.forbiddenMoves(s).map((m) => `${J.squareName(m.from)}→${J.squareName(m.to)}:${m.violation}`), ['i8→i9:perpetual-check']);
+  const r = await think('search:depth=2,repetition=false', s);
+  assert.notStrictEqual(name(r.move), 'i8→i9', 'kể cả bot không hiểu luật cũng không được chọn nước bị cấm');
+});
+
 test('các phong cách bot đã đăng ký', () => {
   for (const id of ['search', 'search-fast', 'search-midgame', 'search-endgame']) assert.ok(bots.get(id), id);
   assert.strictEqual(bots.resolve('search-endgame').params['R.endgame'], 11);
