@@ -57,7 +57,7 @@ test('ordering: at the root, the first plain reveal move is an edge Pawn', async
 test('pruning reveal moves still considers every capture', async () => {
   // red (hidden) Cannon can capture the hidden piece on black's Horse square – the capture is kept even with a tiny revealTopKRoot
   const s = J.createGame({ seed: 1 });
-  const p = bots.resolve('search:depth=2,openingOrder=true,revealTopK=1,revealTopKRoot=1');
+  const p = bots.resolve('search:depth=2,openingOrder=true,revealTopK=1,revealTopKRoot=1,cannonRaidMalus=0');  // (the early-raid penalty would hide what is tested here)
   const r = await p.chooseMove(J.cloneState(s), J, { side: 'r', random: () => 0.5, now: () => performance.now() });
   // the bot's move must be the capture (Cannon takes hidden Horse) – i.e. the capture was considered
   assert.ok(s.board[r.move.to], `bot chose ${J.squareName(r.move.from)}${J.squareName(r.move.to)}, not a capture`);

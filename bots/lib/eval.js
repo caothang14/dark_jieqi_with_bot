@@ -28,6 +28,8 @@ JieqiBots.module(function (root) {
     crossedAE: 0,       // bonus for a revealed Advisor/Elephant across the river ("Sĩ/Tượng chiến"). 0 = off
     hiddenTrapped: 0,   // penalty per own hidden piece that has moves but every target square is attacked by the
                         // opponent – it cannot be revealed safely ("bị cấm"; the opponent controls it). 0 = off
+    horseReach: 0,      // score per square a revealed Horse can jump to in the opponent's half. Makes the bot
+                        // block an enemy Horse's legs ("cản mã", e.g. push the Pawn in front of an edge Horse). 0 = off
     mobility: 0.02,     // score per legal move more than the opponent
     check: 0.3,         // score when giving check
     win: 1000,          // win score (checkmate / opponent has no moves)
@@ -154,6 +156,20 @@ JieqiBots.module(function (root) {
   const controlScore = (state, J, side, w) => (w.hiddenTrapped
     ? w.hiddenTrapped * (trappedHidden(state, J, J.opp(side)) - trappedHidden(state, J, side)) : 0);
 
+  /** Squares in the opponent's half that the revealed Horses of `side` can jump to (legs not blocked). */
+  function horseReach(state, J, side) {
+    const board = state.board;
+    let n = 0;
+    for (let i = 0; i < board.length; i++) {
+      const p = board[i];
+      if (!p || p.hidden || p.side !== side || p.type !== 'H') continue;
+      for (const t of J.pseudoTargets(board, i)) if (crossedRiver(side, J.Y(t))) n++;
+    }
+    return n;
+  }
+  const horseScore = (state, J, side, w) => (w.horseReach
+    ? w.horseReach * (horseReach(state, J, side) - horseReach(state, J, J.opp(side))) : 0);
+
   /**
    * Detailed breakdown from `side`'s point of view.
    * If the game is over (state.result), returns ±win (draw = 0).
@@ -178,7 +194,7 @@ JieqiBots.module(function (root) {
     let chk = 0;
     if (w.check && J.isInCheck(state, opp)) chk += w.check;
     if (w.check && J.isInCheck(state, side)) chk -= w.check;
-    const ctl = controlScore(state, J, side, w);
+    const ctl = controlScore(state, J, side, w) + horseScore(state, J, side, w);
     const score = mat + mob + chk + ctl;
     return { score, terminal: false, phase, material: mat, mobility: mob, check: chk, control: ctl, pieces };
   }
@@ -223,12 +239,13 @@ JieqiBots.module(function (root) {
       if (J.isInCheck(state, side)) score -= w.check;
     }
     if (w.hiddenTrapped) score += controlScore(state, J, side, w);
+    if (w.horseReach) score += horseScore(state, J, side, w);
     return score;
   }
 
   const lib = (root.JieqiBots.lib = root.JieqiBots.lib || {});
   lib.eval = {
     DEFAULT_WEIGHTS, resolveWeights, gamePhase, piecesOnBoard,
-    typeValueAt, pieceValue, material, evaluate, explain, trappedHidden,
+    typeValueAt, pieceValue, material, evaluate, explain, trappedHidden, horseReach,
   };
 });

@@ -26,7 +26,22 @@
  *                square, unless it is attacked or we are in check – those stay hidden for defence ('' = off)
  *   revealTopKDeveloped >0: below the root, once the side to move has >= developedCount revealed Rooks/Cannons/
  *                Horses, consider at most this many reveal moves (instead of revealTopK)
+ *   keepThreatened  a hidden piece attacked and not defended is "in danger": at the root no reveal move is pruned
+ *                (the way out may be a low-priority reveal: moving it, blocking, freeing a square for it), below the
+ *                root the piece's own moves are never pruned – only while the side still has at least
+ *                keepThreatenedMinBig (3) Rooks/Cannons/Horses hidden in its pool (default on, step 7)
+ *   cannonRaidMalus, hiddenRookCaptureMalus   root-only penalties (in Pawns) for moves experts avoid: a hidden
+ *                Cannon capturing a hidden piece before we have a revealed Rook; a hidden Rook capturing anything but
+ *                a revealed Rook/Cannon/Horse. See styleMalus(). 0 = off
+ *   developFirstMalus, developFirstQuietMalus   root-only: when the opponent has a revealed Rook and we have no
+ *                revealed Rook/Cannon/Horse, penalise moves of revealed pieces (capturing a hidden piece / other
+ *                moves) so the bot reveals pieces first. 0 = off
+ *   guardRookBonus root-only bonus for a quiet reveal that blocks a revealed enemy Cannon attacking our hidden Rook
+ *   horseBlockBonus root-only bonus for revealing a hidden Pawn so that it blocks a leg of a revealed enemy Horse
+ *                that could jump into our half ("cản mã")
+ *   cannonRaidMalus applies unless we have a revealed Rook AND the opponent's hidden R/C/H are worth more than ours
  *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
+ *   debug        true: no alpha narrowing at the root and info.root = [{ from, to, score, pen }] for every root move
  *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
  *                (no alpha narrowing at the root) and the move is picked at random among those at most
  *                `randomness` worse than the best (closer to the best = more likely). 0 = always the best move
@@ -89,6 +104,30 @@ JieqiBots.module(function (root) {
   }
 
   const NULL_WINDOW = 0.01;
+  /**
+   * Does `side` have a hidden piece "in danger": attacked by the opponent and not defended?
+   * Then reveal moves are not pruned at that node – the way out may be a low-priority reveal (moving the piece,
+   * blocking, or freeing a square for it), which the priority table would otherwise drop.
+   */
+  function hasThreatenedHidden(J, state, side) {
+    const board = state.board, enemy = J.opp(side);
+    for (let i = 0; i < board.length; i++) {
+      const pc = board[i];
+      if (pc && pc.hidden && pc.side === side && J.isSquareAttacked(board, i, enemy) && !J.isSquareAttacked(board, i, side)) return true;
+    }
+    return false;
+  }
+
+  /** Rooks + Cannons + Horses of `side` still hidden (in its pool). */
+  const poolBig = (state, side) => { const pl = state.pools[side]; return (pl.R || 0) + (pl.C || 0) + (pl.H || 0); };
+  /** Value of the strong pieces still hidden for `side`: Rook 9, Cannon 4.5, Horse 4 per piece in the pool. */
+  const poolStrength = (state, side) => { const pl = state.pools[side]; return 9 * (pl.R || 0) + 4.5 * (pl.C || 0) + 4 * (pl.H || 0); };
+
+  function hasRevealedRook(state, side) {
+    for (const pc of state.board) if (pc && pc.side === side && !pc.hidden && pc.type === 'R') return true;
+    return false;
+  }
+
   /** Number of revealed Rooks, Cannons and Horses of `side`. */
   function bigPiecesOut(state, side) {
     let n = 0;
@@ -103,6 +142,11 @@ JieqiBots.module(function (root) {
   }
 
   function createSearcher(J, ctx, w) {
+    /** The piece on `sq` is attacked by the opponent and not defended. */
+    const isThreatened = (state, sq) => {
+      const side = state.board[sq].side;
+      return J.isSquareAttacked(state.board, sq, J.opp(side)) && !J.isSquareAttacked(state.board, sq, side);
+    };
     const p = ctx.params;
     const WIN = w.win;
     const MATE_ZONE = WIN - 500;
@@ -306,6 +350,8 @@ JieqiBots.module(function (root) {
       let revealsSeen = 0;
       // Once we have enough big pieces out, revealing more rarely helps ("3 quân lớn đã ra thì tấn công")
       let revealK = p.revealTopK;
+      // saving a hidden piece in danger only matters while many strong pieces are still hidden ("còn nhiều quân giá trị")
+      const keepThreatenedHere = p.keepThreatened && poolBig(state, state.turn) >= p.keepThreatenedMinBig;
       if (revealK > 0 && p.revealTopKDeveloped > 0 && bigPiecesOut(state, state.turn) >= p.developedCount) {
         revealK = Math.min(revealK, p.revealTopKDeveloped);
       }
@@ -318,7 +364,9 @@ JieqiBots.module(function (root) {
           // keep hidden Rook / Cannon squares hidden (defence + option value), unless that piece is attacked
           if (p.revealSkipRoles && best > -INF && p.revealSkipRoles.includes(state.board[m.from].role)
               && !J.isSquareAttacked(state.board, m.from, J.opp(state.turn))) continue;
-          if (revealK > 0 && ++revealsSeen > revealK && best > -INF) continue;
+          if (revealK > 0 && ++revealsSeen > revealK && best > -INF
+              // below the root, a hidden piece in danger may always try to run away
+              && !(keepThreatenedHere && isThreatened(state, m.from))) continue;
         }
         let v;
         // LMR: late quiet move → search 1 ply shallower with a null window; re-search at full depth if it surprises
@@ -361,6 +409,102 @@ JieqiBots.module(function (root) {
       return best;
     }
 
+    /**
+     * Expert habits for our own move at the root (not applied inside the tree, so the opponent's options are
+     * still searched in full). The move is only played if it scores this much better than the alternatives:
+     *  - cannonRaidMalus: a hidden Cannon capturing a hidden piece ("vật pháo giả lên mã giả") before we have a
+     *    revealed Rook – experts do it after the edge Pawn produced a Rook, to break the enemy's hidden Rook there
+     *  - hiddenRookCaptureMalus: a hidden Rook ("xe giả", a strong defender) capturing anything but a revealed
+     *    Rook / Cannon / Horse
+     * No penalty when the moving piece is itself attacked and undefended (capturing is then its way out).
+     */
+    function styleMalus(state, m) {
+      const mover = state.board[m.from], target = state.board[m.to];
+      if (!mover.hidden) {
+        // behind in development (the opponent has a Rook out, we have no Rook/Cannon/Horse out): reveal first
+        if (p.developFirstMalus > 0 && bigPiecesOut(state, mover.side) === 0 && hasRevealedRook(state, J.opp(mover.side))
+            && !isThreatened(state, m.from) && !(target && !target.hidden && (target.type === 'R' || target.type === 'C' || target.type === 'H'))) {
+          return target && target.hidden ? p.developFirstMalus : p.developFirstQuietMalus;
+        }
+        return 0;
+      }
+      if (!target) return guardBonus(state, m) + horseBlockBonus(state, m);
+      if (!target.hidden && (target.type === 'R' || target.type === 'C' || target.type === 'H')) return 0;
+      if (isThreatened(state, m.from)) return 0;
+      // raid only once we have a Rook out AND the opponent's hidden pieces are worth more than ours (the swap of
+      // two unknown pieces then favours us)
+      if (mover.role === 'C' && target.hidden && p.cannonRaidMalus > 0
+          && !(hasRevealedRook(state, mover.side) && poolStrength(state, J.opp(mover.side)) > poolStrength(state, mover.side))) {
+        return p.cannonRaidMalus;
+      }
+      if (mover.role === 'R' && p.hiddenRookCaptureMalus > 0) return p.hiddenRookCaptureMalus;
+      return 0;
+    }
+
+    /**
+     * "Gác Tượng/Mã chăn Pháo": an enemy Cannon attacks one of our hidden Rooks (role R); a quiet reveal move that
+     * puts a second piece in the Cannon's line (so the Rook is no longer attacked) gets a bonus (negative penalty).
+     * Without it the bot often sees the blocker as "revealing into the Cannon's mouth" and plays elsewhere.
+     */
+    function guardBonus(state, m) {
+      if (!(p.guardRookBonus > 0)) return 0;
+      const side = state.board[m.from].side, enemy = J.opp(side);
+      const rooks = [];
+      for (let i = 0; i < 90; i++) {
+        const pc = state.board[i];
+        if (pc && pc.hidden && pc.side === side && pc.role === 'R' && i !== m.from && revealedCannonAttacks(state.board, i, enemy)) rooks.push(i);
+      }
+      if (!rooks.length) return 0;
+      const b2 = state.board.slice();
+      b2[m.to] = b2[m.from]; b2[m.from] = null;
+      return rooks.some((i) => !revealedCannonAttacks(b2, i, enemy)) ? -p.guardRookBonus : 0;
+    }
+
+    /**
+     * "Cản mã": the opponent has a revealed Horse that can jump into our half; a hidden Pawn reveal that blocks one
+     * of its legs (fewer squares it can reach in our half) gets a bonus. Opening habit: block it with a Pawn at once.
+     */
+    function horseBlockBonus(state, m) {
+      if (!(p.horseBlockBonus > 0) || state.board[m.from].role !== 'P') return 0;
+      const side = state.board[m.from].side;
+      const before = enemyHorseReach(state.board, side);
+      if (!before) return 0;
+      const b2 = state.board.slice();
+      b2[m.to] = b2[m.from]; b2[m.from] = null;
+      return enemyHorseReach(b2, side) < before ? -p.horseBlockBonus : 0;
+    }
+
+    /** Squares in `side`'s half that the opponent's revealed Horses can jump to. */
+    function enemyHorseReach(board, side) {
+      let n = 0;
+      for (let i = 0; i < 90; i++) {
+        const pc = board[i];
+        if (!pc || pc.hidden || pc.side === side || pc.type !== 'H') continue;
+        for (const t of J.pseudoTargets(board, i)) {
+          const y = (t / 9) | 0;
+          if (side === 'r' ? y >= 5 : y <= 4) n++;
+        }
+      }
+      return n;
+    }
+
+    /** Is square sq attacked by a revealed Cannon of `by`? (exactly one screen on the file/rank) */
+    function revealedCannonAttacks(board, sq, by) {
+      const x = sq % 9, y = (sq / 9) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        let nx = x + dx, ny = y + dy, screen = false;
+        while (nx >= 0 && nx < 9 && ny >= 0 && ny < 10) {
+          const q = board[ny * 9 + nx];
+          if (q) {
+            if (screen) { if (q.side === by && !q.hidden && q.type === 'C') return true; break; }
+            screen = true;
+          }
+          nx += dx; ny += dy;
+        }
+      }
+      return false;
+    }
+
     /** Iterative deepening. Returns { move, score, depth, nodes }. */
     function think(state, timeMs) {
       const t0 = ctx.now();
@@ -368,11 +512,14 @@ JieqiBots.module(function (root) {
       const maxDepth = p.depth > 0 ? p.depth : p.maxDepth;
       let rootMoves = orderMoves(state, J.getLegalMoves(state));
       // Root pruning: keep only the top revealTopKRoot (non-capturing) reveal moves by priority
-      if (p.revealTopKRoot > 0 && !J.isInCheck(state)) {
+      const keepAll = p.keepThreatened && poolBig(state, state.turn) >= p.keepThreatenedMinBig && hasThreatenedHidden(J, state, state.turn);
+      if (p.revealTopKRoot > 0 && !J.isInCheck(state) && !keepAll) {
         let seen = 0;
         const kept = rootMoves.filter((m) => state.board[m.to] || !state.board[m.from].hidden || ++seen <= p.revealTopKRoot);
         if (kept.length) rootMoves = kept;
       }
+      const rootInCheck = J.isInCheck(state);
+      for (const m of rootMoves) m._pen = rootInCheck ? 0 : styleMalus(state, m);
       let best = { move: rootMoves[0], score: 0, depth: 0 };
       if (rootMoves.length === 1) return { ...best, nodes };
       let lastScores = null;                                 // [move, score] of the last completed iteration
@@ -386,16 +533,17 @@ JieqiBots.module(function (root) {
             : (next) => search(next, depth - 1, -INF, INF, 1, true);
           for (const m of rootMoves) {
             let v;
+            const pen = m._pen;                            // style penalty: the move must be this much better
             if (p.pvs && searched > 0) {
-              v = moveValue(state, m, alpha, alpha + NULL_WINDOW, child, probe);
-              if (v > alpha) v = moveValue(state, m, alpha, INF, child, probe);
+              v = moveValue(state, m, alpha + pen, alpha + pen + NULL_WINDOW, child, probe) - pen;
+              if (v > alpha) v = moveValue(state, m, alpha + pen, INF, child, probe) - pen;
             } else {
-              v = moveValue(state, m, alpha, INF, child, probe);
+              v = moveValue(state, m, alpha + pen, INF, child, probe) - pen;
             }
             m._s = v;
             searched++;
             if (v > iterScore) { iterScore = v; iterBest = m; }
-            if (v > alpha && !p.randomness) alpha = v;     // randomness: keep a full window → exact scores
+            if (v > alpha && !p.randomness && !p.debug) alpha = v;     // randomness: keep a full window → exact scores
           }
         } catch (e) {
           if (e !== TIMEOUT) throw e;
@@ -404,13 +552,14 @@ JieqiBots.module(function (root) {
           break;
         }
         best = { move: iterBest, score: iterScore, depth };
-        if (p.randomness) lastScores = rootMoves.map((m) => [m, m._s]);
+        if (p.randomness || p.debug) lastScores = rootMoves.map((m) => [m, m._s]);
         // best move first for the next iteration
         rootMoves.sort((a, b) => (b === iterBest) - (a === iterBest) || b._s - a._s);
         if (Math.abs(iterScore) > MATE_ZONE) break;                 // mate found
         if (p.depth <= 0 && ctx.now() - t0 > timeMs * 0.45) break;  // next iteration unlikely to finish
       }
-      if (lastScores && Math.abs(best.score) < MATE_ZONE) best = pickRandomized(best, lastScores);
+      if (p.debug && lastScores) best.root = lastScores.map(([m, sc]) => ({ from: m.from, to: m.to, score: +sc.toFixed(2), pen: m._pen }));
+      if (p.randomness && lastScores && Math.abs(best.score) < MATE_ZONE) best = pickRandomized(best, lastScores);
       return { ...best, nodes };
     }
 
@@ -434,8 +583,11 @@ JieqiBots.module(function (root) {
       qDepth: 6, qHiddenPly: 1, qCheckPly: 2, deltaMargin: 2, chanceBound: 30, probe: true, tt: true, ttSize: 500000,
       nullMove: true, nullR: 2, nullMinDepth: 3, lmr: true, lmrMinDepth: 2, lmrAfter: 4, pvs: false, repetition: true,
       openingOrder: true, revealTopK: 4, revealTopKRoot: 8, randomness: 0, drawThreshold: -0.5,
-      revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge',
+      revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge', keepThreatened: true, keepThreatenedMinBig: 3,
       hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
+      horseReach: 0,        // evaluation weight (off: lost in the arena at 0.3); replaced by the root horseBlockBonus
+      cannonRaidMalus: 1.5, hiddenRookCaptureMalus: 1.5,   // expert habits at the root (step 7, not arena-tested yet)
+      developFirstMalus: 1, developFirstQuietMalus: 0.3, guardRookBonus: 2, horseBlockBonus: 1.5,
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -445,7 +597,10 @@ JieqiBots.module(function (root) {
       }
       const c = { ...ctx, params: p };
       const r = createSearcher(J, c, w).think(state, thinkTime(state, c, w));
-      return { move: r.move, info: { score: +r.score.toFixed(2), depth: r.depth, nodes: r.nodes } };
+      // the root score includes the style penalty of the chosen move: report the position's own score
+      const info = { score: +(r.score + (r.move && r.move._pen ? r.move._pen : 0)).toFixed(2), depth: r.depth, nodes: r.nodes };
+      if (r.root) info.root = r.root;   // debug=true: exact score of every root move (full window), for analysis
+      return { move: r.move, info };
     },
     acceptDraw(state, J, ctx) {
       return E.evaluate(state, J, ctx.side, E.resolveWeights(ctx.params)) <= ctx.params.drawThreshold;
@@ -456,12 +611,17 @@ JieqiBots.module(function (root) {
   Bots.variant('search', {
     id: 'search-v4', name: 'Bot tìm kiếm (bước 4)', hidden: true,
     description: '[Tham chiếu] Bản trước khi có ưu tiên lật quân – giữ lại để đo tiến bộ.',
-    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0 },
+    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v5', name: 'Bot tìm kiếm (bước 5)', hidden: true,
     description: '[Tham chiếu] Bản bước 5 (trước khi có điểm khống chế quân úp) – giữ lại để đo tiến bộ.',
-    params: { qHiddenPly: 1, hiddenTrapped: 0 },
+    params: { qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0 },
+  });
+  Bots.variant('search', {
+    id: 'search-v6', name: 'Bot tìm kiếm (bước 6)', hidden: true,
+    description: '[Tham chiếu] Bản bước 6 (trước khi sửa lỗi khai cuộc: cản mã, cứu quân úp bị đe doạ) – giữ lại để đo tiến bộ.',
+    params: { keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0 },
   });
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',

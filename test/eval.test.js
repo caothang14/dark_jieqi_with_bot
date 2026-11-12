@@ -158,6 +158,16 @@ test('hiddenTrapped: a hidden piece whose every move lands on an attacked square
   close(E.explain(s, J, 'r', w).score, E.evaluate(s, J, 'r', w), 'explain = evaluate');
 });
 
+test('horseReach: squares a revealed Horse can jump to in the opponent half; a blocked leg removes them', () => {
+  const s = emptyGame();
+  put(s, 0, 4, 'b', 'H');                                   // black Horse a5 reaches b3 (1,6) and c4 (2,5) in red's half
+  assert.strictEqual(E.horseReach(s, J, 'b'), 2);
+  put(s, 0, 5, 'r', 'P');                                   // red Pawn a4 blocks the leg towards b3
+  assert.strictEqual(E.horseReach(s, J, 'b'), 1);
+  const w = E.resolveWeights({ horseReach: 0.3 });
+  close(E.explain(s, J, 'r', w).score, E.evaluate(s, J, 'r', w), 'explain = evaluate');
+});
+
 (async () => {
   for (const [name, fn] of tests) { await fn(); console.log('✓', name); }
   console.log(`\n${tests.length} tests passed`);

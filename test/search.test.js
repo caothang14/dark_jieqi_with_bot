@@ -99,7 +99,7 @@ test('repetition: the bot avoids perpetual check when it is the violator', async
 });
 
 test('bot styles are registered', () => {
-  for (const id of ['search', 'search-fast', 'search-midgame', 'search-endgame', 'search-v4', 'search-v5']) assert.ok(bots.get(id), id);
+  for (const id of ['search', 'search-fast', 'search-midgame', 'search-endgame', 'search-v4', 'search-v5', 'search-v6']) assert.ok(bots.get(id), id);
   assert.strictEqual(bots.resolve('search').params.hiddenTrapped, 0.3);
   assert.strictEqual(bots.resolve('search-v5').params.hiddenTrapped, 0, 'reference keeps the old evaluation');
   assert.strictEqual(bots.resolve('search-endgame').params['R.endgame'], 11);
@@ -132,6 +132,99 @@ test('randomness: varies the move, but only among near-best moves', async () => 
     const r = await bots.resolve('level-2').chooseMove(J.cloneState(m), J, { ...ctx('r'), random: bots.seededRandom(i) });
     assert.strictEqual(name(r.move), 'i7→i9', `seed ${i}`);
   }
+});
+
+/** Start position (seed 3) with some squares changed: [x, y, side, type] (type null = empty square). */
+const fromStart = (changes) => {
+  const s = J.createGame({ seed: 3 });
+  for (const [x, y, side, type] of changes) {
+    if (type) { s.board[J.idx(x, y)] = { side, type, hidden: false, role: 'P' }; s.pools[side][type]--; } else s.board[J.idx(x, y)] = null;
+  }
+  return s;
+};
+
+test('a hidden piece in danger is not dropped by reveal pruning (keepThreatened)', async () => {
+  // Black Cannon a5 attacks the red hidden piece a0 through the Pawn a3; nothing defends a0. Its way out is a
+  // low-priority reveal (e.g. b0→c2 frees b0), which root pruning used to drop – the bot then lost a0 for nothing.
+  const s = fromStart([[0, 4, 'b', 'C'], [1, 2, 'b', null]]);
+  const off = await think('search:depth=2,keepThreatened=false,horseReach=0', s);
+  const on = await think('search:depth=2,horseReach=0', s);
+  assert.ok(on.info.score > off.info.score, `${on.info.score} should beat ${off.info.score}`);
+  assert.notStrictEqual(name(on.move), name(off.move));
+});
+
+test('blocks an enemy Horse that came out on the edge with a Pawn (horseBlockBonus)', async () => {
+  // Black Horse a5 (revealed from the edge Pawn) can jump into red's camp via b3; pushing the Pawn a3→a4 blocks its leg
+  const s = fromStart([[0, 4, 'b', 'H'], [0, 3, 'b', null], [4, 5, 'r', 'P'], [4, 6, 'r', null]]);
+  assert.notStrictEqual(name((await think('search:depth=2,horseBlockBonus=0,cannonRaidMalus=0', s)).move), 'a3→a4');
+  assert.strictEqual(name((await think('search:depth=2', s)).move), 'a3→a4');
+  // the eval-based alternative (horseReach, off by default) also finds it
+  assert.strictEqual(name((await think('search:depth=2,horseBlockBonus=0,horseReach=0.3', s)).move), 'a3→a4');
+});
+
+test('keepThreatened only while at least 3 Rooks/Cannons/Horses are still hidden', async () => {
+  const s = fromStart([[0, 4, 'b', 'C'], [1, 2, 'b', null]]);
+  const n = async (spec) => (await think(spec, s)).info.nodes;
+  const on = await n('search:depth=1'), off = await n('search:depth=1,keepThreatened=false');
+  assert.ok(on > off, 'full pool: reveal pruning is lifted');
+  s.pools.r = { ...s.pools.r, R: 0, C: 0, H: 2 };          // only 2 strong pieces left hidden
+  assert.strictEqual(await n('search:depth=1'), await n('search:depth=1,keepThreatened=false'));
+});
+
+test('cannon raid only with a Rook out and a richer enemy pool', async () => {
+  const s = J.makeMove(J.createGame({ seed: 2 }), { from: J.idx(4, 6), to: J.idx(4, 5) });   // Red e3e4; Black to move
+  const raidPen = async (st) => (await think('search:depth=1,debug=true', st)).info.root
+    .find((x) => name(x) === 'b7→b0').pen;
+  assert.strictEqual(await raidPen(s), 1.5, 'no Rook out');
+  const t = J.cloneState(s);
+  t.board[J.idx(4, 1)] = null; t.board[J.idx(5, 1)] = { side: 'b', type: 'R', hidden: false, role: 'P' }; t.pools.b.R--;
+  assert.strictEqual(await raidPen(t), 0, 'Rook out, Red still has more strong pieces hidden');
+  t.pools.r = { ...t.pools.r, R: 0 };
+  assert.strictEqual(await raidPen(t), 1.5, 'Rook out but our hidden pieces are worth more');
+});
+
+test('expert habits: no early hidden-Cannon raid, hidden Rook does not capture weak pieces', async () => {
+  const kind = (s, m) => {
+    const a = s.board[m.from], t = s.board[m.to];
+    if (!t || !a.hidden) return '';
+    if (a.role === 'C' && t.hidden) return 'cannon-raid';
+    if (a.role === 'R' && (t.hidden || !['R', 'C', 'H'].includes(t.type))) return 'rook-capture';
+    return '';
+  };
+  let rawRaids = 0;
+  for (const seed of [2, 3, 4, 5]) {
+    // Red opens e3e4; Black replies. The step-6 bot raids b7xb0 here; the new one should not.
+    const s = J.makeMove(J.createGame({ seed }), { from: J.idx(4, 6), to: J.idx(4, 5) });
+    if (kind(s, (await think('search-v6:depth=2', s)).move) === 'cannon-raid') rawRaids++;
+    assert.strictEqual(kind(s, (await think('search:depth=2', s)).move), '', `seed ${seed}`);
+  }
+  assert.ok(rawRaids >= 3, 'test positions should tempt the old bot');
+  // after Black's raid, the old bot recaptures with its hidden Rook a0; the new one keeps it hidden
+  // unless the raider turned out to be a Rook / Cannon / Horse
+  for (const seed of [2, 3, 5]) {
+    let s = J.makeMove(J.createGame({ seed }), { from: J.idx(4, 6), to: J.idx(4, 5) });
+    s = J.makeMove(s, { from: J.idx(1, 2), to: J.idx(1, 9) });
+    const raider = s.board[J.idx(1, 9)].type;
+    const m = (await think('search:depth=2', s)).move;
+    if (!['R', 'C', 'H'].includes(raider)) assert.strictEqual(kind(s, m), '', `seed ${seed}, raider ${raider}`);
+  }
+});
+
+test('guards a hidden Rook attacked by an enemy Cannon by putting a piece in the line (guardRookBonus)', async () => {
+  // Black Cannon a5 attacks the hidden Rook a0 through a3: the expert move is c0→a2 (or b0→a2) to block it
+  const s = fromStart([[0, 4, 'b', 'C'], [1, 2, 'b', null]]);
+  assert.notStrictEqual(name((await think('search:depth=2,guardRookBonus=0', s)).move), 'c0→a2');
+  assert.ok(['c0→a2', 'b0→a2'].includes(name((await think('search:depth=2', s)).move)));
+});
+
+test('reveals first when the opponent already has a Rook out and we have no big piece out (developFirst)', async () => {
+  // Black has a Rook on c8; Red only has an Advisor out, which could take the hidden Pawn a6
+  const s = fromStart([[2, 1, 'b', 'R'], [2, 0, 'b', null], [1, 4, 'r', 'A'], [3, 9, 'r', null]]);
+  const r = await think('search:depth=2,debug=true', s);
+  const pen = (from, to) => r.info.root.find((x) => name(x) === `${from}→${to}`).pen;
+  assert.strictEqual(pen('b5', 'a6'), 1, 'Advisor taking a hidden piece');
+  assert.strictEqual(pen('b5', 'c4'), 0.3, 'other Advisor moves');
+  assert.strictEqual(pen('e3', 'e4'), 0, 'reveal moves are free');
 });
 
 (async () => {

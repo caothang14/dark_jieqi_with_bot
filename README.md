@@ -237,7 +237,7 @@ Looks several moves ahead:
 | `search-midgame` | Plays fast in the opening, spends 2.5× as much time in the middlegame |
 | `search-endgame` | Values Horse/Rook/crossed Pawns higher in the endgame, thinks longer once in the endgame |
 | `level-1` … `level-4` | Difficulty levels (see "Game modes") |
-| `search-v3`, `search-v4`, `search-v5` | Step-3 / step-4 (before reveal priorities) / step-5 (before `hiddenTrapped`) versions, hidden from the UI – reference points only |
+| `search-v3` … `search-v6` | Step-3 / step-4 (before reveal priorities) / step-5 (before `hiddenTrapped`) / step-6 (before the opening fixes) versions, hidden from the UI – reference points only |
 
 Params: `depth` (fixed depth – reproducible), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, `probe`, `tt`, `lmr`, `nullMove`, `pvs`, `randomness`… plus every evaluation weight. Examples: `--a search:depth=3`, `--a search:lmr=false --b search`.
 
@@ -281,6 +281,23 @@ Ideas taken from player guides (mistboard.com, zigavn.com) were implemented as p
 Note: 30 games give an error bar of roughly ±120 Elo, so a single 30-game result can be misleading (two ideas that looked good on the first 30 games lost when combined). Only `hiddenTrapped` stayed positive on three different seed sets.
 
 Final check at 2 s/move ("Rất khó"): new `search` vs the previous version `search-v5`: **50% (+10 =0 −10, 20 games)** – no measurable gain at this time control (the error bar is ±170 Elo; the deeper search may already see most of what the penalty encodes). The gain is clear at 0.5 s/move ("Khó").
+
+### Opening fixes from play (step 7)
+
+| Problem seen in games | Fix | Param |
+|---|---|---|
+| The bot lets an enemy Horse that came out on the edge jump into its camp instead of pushing the Pawn in front of it to block the Horse's leg ("cản mã") | Bonus for revealing a hidden Pawn so that it blocks a leg of a revealed enemy Horse that can jump into our half (the first try, an evaluation term `horseReach=0.3`, lost in the arena and is now off) | `horseBlockBonus=1.5` (on) |
+| A hidden piece in danger is not saved: the move that saves it (often a low-priority reveal, e.g. freeing a square) was dropped by reveal pruning at the root | If a hidden piece of the side to move is attacked and undefended, and at least 3 Rooks/Cannons/Horses are still hidden: no reveal pruning at the root, and below the root its own moves are never pruned | `keepThreatened=true`, `keepThreatenedMinBig=3` (on) |
+| The bot raids early with a hidden Cannon onto the enemy's hidden Horse square ("vật pháo giả lên mã giả"); experts do it only after the edge Pawn produced a Rook, to break the enemy's hidden Rook on that side | Penalty on the bot's own move: hidden Cannon capturing a hidden piece, unless it has a revealed Rook AND the opponent's hidden Rooks/Cannons/Horses are worth more than its own (R 9, C 4.5, H 4) | `cannonRaidMalus=1.5` (on) |
+| The bot captures with its hidden Rook ("xe giả"), which experts keep hidden because it defends well – unless the target is a Rook / Cannon / Horse | Penalty on the bot's own move at the root: hidden Rook capturing anything but a revealed R/C/H | `hiddenRookCaptureMalus=1.5` (on) |
+| The bot captures the opponent's hidden pieces instead of revealing its own, even when the opponent already has a Rook out and it has no fighting piece out | Penalty on the bot's own moves of revealed pieces in that situation (capturing a hidden piece / other moves) | `developFirstMalus=1`, `developFirstQuietMalus=0.3` (on) |
+| An enemy Cannon on the edge attacks the bot's hidden Rook, and the bot does not block it with the Elephant/Horse ("gác Tượng/Mã chăn Pháo") – it sees the blocker as walking into the Cannon | Bonus for a quiet reveal that puts a second piece between a revealed enemy Cannon and the bot's hidden Rook | `guardRookBonus=2` (on) |
+
+These penalties/bonuses are in Pawns: such a move is only played if it is that much better than the alternatives. They apply only to the bot's own move (when searching, the opponent may still play these moves), and not when in check or when the moving piece is itself attacked and undefended.
+
+Arena (0.5 s/move, the same 60 games each time, against `search-v6`): first version 43.3% (+25 =2 −33, ≈ −47 Elo); after narrowing rules 1, 2, 3 and 6 as above: **55.8% (+33 =1 −26, ≈ +41 Elo, LOS 82%)** – better, not yet statistically certain.
+
+All six have test positions in `test/search.test.js`. To see why the bot chose a move, use `search:depth=3,debug=true`: `info.root` lists the exact score (and penalty) of every root move. The previous version is kept as the hidden bot `search-v6` for the next arena run.
 
 ### Progress (measured in the arena, 0.3 seconds/move)
 
