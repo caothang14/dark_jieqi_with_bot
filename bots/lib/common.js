@@ -1,5 +1,5 @@
 /* Helpers shared by the bots: JieqiBots.lib.common */
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
 
   // Basic piece values (unit ~ 1 Pawn)
@@ -30,4 +30,4 @@
 
   const lib = (root.JieqiBots.lib = root.JieqiBots.lib || {});
   lib.common = { VALUE, expectedHiddenValue, material, materialDiff, pick };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

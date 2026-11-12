@@ -24,7 +24,11 @@
  *   - Repetition under the Chinese rules (中国象棋竞赛规则): see the "Repetition" section below.
  *   - Draw after 60 moves (120 plies) in a row with no capture and no reveal by either side (自然限着).
  */
-(function (root) {
+(function (factory) {
+  // The factory is also kept as source text for the bot Web Worker (bots/worker.js).
+  (globalThis.JieqiSources = globalThis.JieqiSources || []).push({ name: 'engine.js', factory });
+  factory(globalThis);
+})(function (root) {
   'use strict';
 
   const W = 9, H = 10;
@@ -425,6 +429,26 @@
     return n;
   }
 
+  /**
+   * Hidden pieces of `side` that have pseudo-legal moves but every target square is attacked by the opponent
+   * (on the current board) – they cannot be revealed safely. Allocation-free, stops at the first safe square.
+   */
+  const TRAP_BUF = new Int16Array(64);
+  function countTrappedHidden(state, side) {
+    const board = state.board, enemy = opp(side);
+    let n = 0;
+    for (let i = 0; i < board.length; i++) {
+      const p = board[i];
+      if (!p || !p.hidden || p.side !== side) continue;
+      const k = genTargets(board, i, TRAP_BUF, 0);
+      if (!k) continue;
+      let safe = false;
+      for (let j = 0; j < k && !safe; j++) if (!isSquareAttacked(board, TRAP_BUF[j], enemy)) safe = true;
+      if (!safe) n++;
+    }
+    return n;
+  }
+
   function getLegalMovesFrom(state, from) {
     return getLegalMoves(state).filter((m) => m.from === from);
   }
@@ -748,11 +772,11 @@
     createGame, cloneState,
     getLegalMoves, getLegalMovesFrom, countPseudoMoves, makeMove, revealAll,
     positionKey, repetitionStatus, classifyMove, forbiddenMoves, DEFAULT_RULES,
-    isInCheck, kingSquare, revealProbabilities, isSquareAttacked,
+    isInCheck, kingSquare, revealProbabilities, isSquareAttacked, pseudoTargets, countTrappedHidden,
     _debug: { isSquareAttackedSlow, kingsFacing },
     squareName, toAscii,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Jieqi = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

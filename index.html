@@ -8,7 +8,7 @@
 </head>
 <body>
   <main class="app">
-    <section class="board-wrap">
+    <section id="boardWrap" class="board-wrap">
       <div id="clockB" class="clock b"><span class="who">Đen</span><span class="time">--:--</span></div>
       <div id="board" class="board" aria-label="Bàn cờ">
         <svg class="grid" viewBox="0 0 900 1000" aria-hidden="true">
@@ -26,15 +26,38 @@
       <div id="status" class="status"></div>
       <p id="toast" class="toast" hidden></p>
 
-      <div class="players">
-        <label class="field">Đỏ
-          <select id="playerR"><option value="human">Người</option></select>
-        </label>
-        <label class="field">Đen
-          <select id="playerB"><option value="human">Người</option></select>
-        </label>
+      <div class="tabs" role="tablist" aria-label="Chế độ chơi">
+        <button class="tab" role="tab" data-mode="computer">Đấu với máy</button>
+        <button class="tab" role="tab" data-mode="two">Hai người</button>
+        <button class="tab" role="tab" data-mode="custom">Tuỳ chỉnh</button>
       </div>
-      <p id="botDesc" class="note bot-desc" hidden></p>
+      <div id="modeComputer" class="mode-body">
+        <div class="players">
+          <label class="field">Bạn cầm
+            <select id="humanSide">
+              <option value="r">Đỏ (đi trước)</option>
+              <option value="b">Đen</option>
+              <option value="random">Ngẫu nhiên</option>
+            </select>
+          </label>
+          <label class="field">Mức độ
+            <select id="level"></select>
+          </label>
+        </div>
+        <p id="levelDesc" class="note bot-desc"></p>
+      </div>
+      <div id="modeCustom" class="mode-body" hidden>
+        <div class="players">
+          <label class="field">Đỏ
+            <select id="playerR"><option value="human">Người</option></select>
+          </label>
+          <label class="field">Đen
+            <select id="playerB"><option value="human">Người</option></select>
+          </label>
+        </div>
+        <p id="botDesc" class="note bot-desc" hidden></p>
+      </div>
+      <p id="modeNote" class="note" hidden>Chế độ mới sẽ áp dụng khi bấm "Ván mới".</p>
       <label class="field">Thời gian
         <select id="timeControl">
           <option value="0+0">Không tính giờ</option>
@@ -93,6 +116,7 @@
   <script src="clock.js"></script>
   <script src="bots/registry.js"></script>
   <script src="bots/manifest.js"></script>
+  <script src="bots/worker.js"></script>
   <!-- ui.js tự nạp các bot trong bots/manifest.js -->
   <script src="ui.js"></script>
 </body>

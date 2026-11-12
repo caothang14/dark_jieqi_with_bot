@@ -3,7 +3,7 @@
  * taking the expectation over every reveal outcome (what our piece turns out to be, what a captured hidden piece was).
  * Does not look at the opponent's reply – that is the search bot's job (step 3).
  */
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
   const E = root.JieqiBots.lib.eval;
 
@@ -64,4 +64,4 @@
   });
 
   root.JieqiBots.lib.search1 = { outcomes, expectedScore };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

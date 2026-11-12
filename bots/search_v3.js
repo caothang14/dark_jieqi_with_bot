@@ -16,7 +16,7 @@
  *   chanceBound  score bound used at chance nodes (child scores are clamped to [-b, b])
  *   + every evaluation weight (bots/lib/eval.js): 'R.endgame', 'mobility', ...
  */
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
   const Bots = root.JieqiBots;
   const E = Bots.lib.eval;
@@ -242,4 +242,4 @@
   });
 
   Bots.lib.searchV3 = { createSearcher, outcomes };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

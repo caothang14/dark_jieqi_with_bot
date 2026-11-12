@@ -16,6 +16,7 @@
  * ── Variants (same algorithm, different params) ────────────────────────────────────
  *   JieqiBots.variant('greedy', { id: 'greedy-safe', name: 'Tham ăn (cẩn thận)', params: { ... } });
  *   Or pick one quickly with a string: 'greedy:captureWeight=2,revealBonus=0'
+ *   Difficulty levels (bots/levels.js) are variants with `level: 1..4` and `levelName`; JieqiBots.levels() lists them.
  *
  * ── ctx passed to the bot (created by the host = UI or arena) ──────────────────────
  *   side          'r' | 'b'   the side the bot plays
@@ -28,10 +29,17 @@
  *   clock         null or { myTimeMs, oppTimeMs, incrementMs }
  *   history       array of moves played so far [{from,to}] (for repetition avoidance, opening book…)
  *
+ * Every bot file is wrapped in JieqiBots.module(function (root) { ... }); so that it can also run in the
+ * bot Web Worker (bots/worker.js) and not freeze the UI.
+ *
  * A bot must not modify `state` (the host always passes a copy), and it can never see what a hidden piece is,
  * because the engine only decides the identity at reveal time.
  */
-(function (root) {
+(function (factory) {
+  // The factory is also kept as source text for the bot Web Worker (bots/worker.js).
+  (globalThis.JieqiSources = globalThis.JieqiSources || []).push({ name: 'bots/registry.js', factory });
+  factory(globalThis);
+})(function (root) {
   'use strict';
   if (root.JieqiBots && root.JieqiBots.register) return; // already loaded
 
@@ -44,11 +52,13 @@
     return def;
   }
 
-  function variant(baseId, { id, name, description, params, hidden }) {
+  /** extra fields (e.g. `level`, `levelName`) are kept on the variant; `hidden` and `level` are not inherited. */
+  function variant(baseId, { id, name, description, params, hidden, ...extra }) {
     const base = defs.get(baseId);
     if (!base) throw new Error(`No such base bot: ${baseId}`);
     return register({
-      ...base, id, name: name || id, description: description || base.description,
+      ...base, level: undefined, levelName: undefined, ...extra, id, name: name || id,
+      description: description || base.description,
       params: { ...base.params, ...params }, baseId, hidden: !!hidden,
     });
   }
@@ -108,10 +118,24 @@
     };
   }
 
+  /**
+   * Wrapper for every file in bots/ (see the template in README): runs `factory(root)` and keeps the
+   * factory so its source can be shipped to the bot Web Worker. A bot file that does not use it still
+   * works, it just runs on the main thread.
+   */
+  function defineModule(factory) {
+    const doc = root.document;
+    const name = (doc && doc.currentScript && doc.currentScript.getAttribute('src')) || 'bot module';
+    (root.JieqiSources = root.JieqiSources || []).push({ name, factory });
+    factory(root);
+  }
+
   root.JieqiBots = {
+    module: defineModule,
     register, variant, resolve, parseParams, suggestBudget, seededRandom,
     list: () => [...defs.values()],
+    levels: () => [...defs.values()].filter((d) => d.level).sort((x, y) => x.level - y.level),
     get: (id) => defs.get(id),
     lib: (root.JieqiBots && root.JieqiBots.lib) || {}, // helpers shared between bots (bots/lib/*)
   };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

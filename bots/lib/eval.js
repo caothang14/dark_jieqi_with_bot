@@ -9,7 +9,7 @@
  *
  * Override weights via params (also in a bot spec): 'eval-1ply:R.endgame=11,mobility=0,P.crossed=2.5'
  */
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
 
   const DEFAULT_WEIGHTS = {
@@ -25,6 +25,9 @@
     hiddenBonus: 0,     // bonus per piece still hidden ("mystery" value), off by default
     development: 0,     // penalty for still-hidden pieces by reveal priority (lib/opening.js): pieces that should be revealed
                         // early (edge Pawns) are penalised most, a hidden Rook barely at all. 0 = off
+    crossedAE: 0,       // bonus for a revealed Advisor/Elephant across the river ("Sĩ/Tượng chiến"). 0 = off
+    hiddenTrapped: 0,   // penalty per own hidden piece that has moves but every target square is attacked by the
+                        // opponent – it cannot be revealed safely ("bị cấm"; the opponent controls it). 0 = off
     mobility: 0.02,     // score per legal move more than the opponent
     check: 0.3,         // score when giving check
     win: 1000,          // win score (checkmate / opponent has no moves)
@@ -101,8 +104,9 @@
         if (isPalaceCenter(side, x, y)) return w.P.palaceCenter;
         if (atBottom(side, y)) return w.P.bottom;
         return crossedRiver(side, y) ? w.P.crossed : w.P.home;
-      case 'E': return w.E;
-      case 'A': return hasPairedAdvisor(state, J, sq, side) ? w.A.paired : w.A.single;
+      case 'E': return w.E + (w.crossedAE && crossedRiver(side, y) ? w.crossedAE : 0);
+      case 'A': return (hasPairedAdvisor(state, J, sq, side) ? w.A.paired : w.A.single)
+        + (w.crossedAE && crossedRiver(side, y) ? w.crossedAE : 0);
       case 'H': return w.H[phase];
       case 'C': return w.C[phase];
       case 'R': return w.R[phase];
@@ -145,6 +149,11 @@
     return J.countPseudoMoves(state, side);
   }
 
+  /** Hidden pieces of `side` that have moves, but every target square is attacked by the opponent ("bị cấm"). */
+  const trappedHidden = (state, J, side) => J.countTrappedHidden(state, side);
+  const controlScore = (state, J, side, w) => (w.hiddenTrapped
+    ? w.hiddenTrapped * (trappedHidden(state, J, J.opp(side)) - trappedHidden(state, J, side)) : 0);
+
   /**
    * Detailed breakdown from `side`'s point of view.
    * If the game is over (state.result), returns ±win (draw = 0).
@@ -169,8 +178,9 @@
     let chk = 0;
     if (w.check && J.isInCheck(state, opp)) chk += w.check;
     if (w.check && J.isInCheck(state, side)) chk -= w.check;
-    const score = mat + mob + chk;
-    return { score, terminal: false, phase, material: mat, mobility: mob, check: chk, pieces };
+    const ctl = controlScore(state, J, side, w);
+    const score = mat + mob + chk + ctl;
+    return { score, terminal: false, phase, material: mat, mobility: mob, check: chk, control: ctl, pieces };
   }
 
   // ── Fast version for search (same result as explain, without building the piece list) ──
@@ -212,12 +222,13 @@
       if (J.isInCheck(state, opp)) score += w.check;
       if (J.isInCheck(state, side)) score -= w.check;
     }
+    if (w.hiddenTrapped) score += controlScore(state, J, side, w);
     return score;
   }
 
   const lib = (root.JieqiBots.lib = root.JieqiBots.lib || {});
   lib.eval = {
     DEFAULT_WEIGHTS, resolveWeights, gamePhase, piecesOnBoard,
-    typeValueAt, pieceValue, material, evaluate, explain,
+    typeValueAt, pieceValue, material, evaluate, explain, trappedHidden,
   };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

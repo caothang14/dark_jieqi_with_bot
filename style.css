@@ -181,3 +181,25 @@ button.danger { background: #a32a1f; }
   font: 700 clamp(12px, 2.6vw, 18px)/1 system-ui, sans-serif;
   display: grid; place-items: center;
 }
+
+/* ---------- Game mode (play vs computer / two players / custom) ---------- */
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; background: #efe3cf; padding: 3px; border-radius: 8px; }
+.tabs .tab {
+  flex: 1; padding: 6px 4px; font-size: 13px; background: transparent; color: var(--text);
+  border-radius: 6px; font-weight: 600;
+}
+.tabs .tab.active { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .15); }
+.mode-body[hidden] { display: none; }
+#modeComputer .players .field:first-child { color: var(--text); }
+#levelDesc { min-height: 1em; }
+
+/* Board seen from Black's side: the clocks swap places too */
+.board-wrap.flipped { display: flex; flex-direction: column-reverse; }
+
+/* Bot thinking indicator */
+.status.thinking::after {
+  content: ''; display: inline-block; width: 10px; height: 10px; margin-left: 8px; vertical-align: -1px;
+  border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

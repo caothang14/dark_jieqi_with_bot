@@ -10,16 +10,23 @@
  * Applies as long as hidden pieces remain. The lower the rank, the earlier it should be revealed. "Don't reveal
  * into the enemy's mouth" is found by the search bot itself (quiescence); this table only orders safe moves.
  */
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
 
-  /** Priority rank (1..9) of reveal move m, or 0 if m is not a non-capturing reveal move. */
-  function revealRank(state, J, m) {
+  /**
+   * Priority rank (1..9) of reveal move m, or 0 if m is not a non-capturing reveal move.
+   * pawnOrder: 'edge' (default: edge Pawns first, then files 3/7) or 'c37' (files 3/7 first, then edge Pawns).
+   */
+  function revealRank(state, J, m, pawnOrder = 'edge') {
     const p = state.board[m.from];
     if (!p || !p.hidden || state.board[m.to]) return 0;
     const fx = J.X(m.from), tx = J.X(m.to), fy = J.Y(m.from), ty = J.Y(m.to);
     switch (p.role) {
-      case 'P': return fx === 0 || fx === 8 ? 1 : fx === 2 || fx === 6 ? 2 : 3;
+      case 'P': {
+        const edge = fx === 0 || fx === 8, c37 = fx === 2 || fx === 6;
+        if (pawnOrder === 'c37') return c37 ? 1 : edge ? 2 : 3;
+        return edge ? 1 : c37 ? 2 : 3;
+      }
       case 'A': return 4;
       case 'E': return tx === 4 ? 4 : 6;
       case 'H': return 5;
@@ -47,4 +54,4 @@
 
   const lib = (root.JieqiBots.lib = root.JieqiBots.lib || {});
   lib.opening = { revealRank, hiddenRank };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

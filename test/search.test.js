@@ -99,8 +99,39 @@ test('repetition: the bot avoids perpetual check when it is the violator', async
 });
 
 test('bot styles are registered', () => {
-  for (const id of ['search', 'search-fast', 'search-midgame', 'search-endgame']) assert.ok(bots.get(id), id);
+  for (const id of ['search', 'search-fast', 'search-midgame', 'search-endgame', 'search-v4', 'search-v5']) assert.ok(bots.get(id), id);
+  assert.strictEqual(bots.resolve('search').params.hiddenTrapped, 0.3);
+  assert.strictEqual(bots.resolve('search-v5').params.hiddenTrapped, 0, 'reference keeps the old evaluation');
   assert.strictEqual(bots.resolve('search-endgame').params['R.endgame'], 11);
+});
+
+test('difficulty levels are registered in order', () => {
+  assert.deepStrictEqual(bots.levels().map((l) => l.id), ['level-1', 'level-2', 'level-3', 'level-4']);
+  assert.ok(bots.levels().every((l) => l.levelName && !l.hidden && l.baseId === 'search'));
+  assert.strictEqual(bots.get('search').level, undefined, 'the base bot is not a level');
+});
+
+test('randomness: varies the move, but only among near-best moves', async () => {
+  const s0 = J.createGame({ seed: 5 });
+  const seen = new Set();
+  for (let i = 0; i < 12; i++) {
+    const c = { ...ctx('r'), random: bots.seededRandom(i) };
+    const r = await bots.resolve('search:depth=1,randomness=1.5').chooseMove(J.cloneState(s0), J, c);
+    seen.add(name(r.move));
+  }
+  assert.ok(seen.size > 1, 'should not always play the same move');
+  // a free Rook (+9) is far above every alternative: even the easiest level always takes it
+  const s = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [0, 5, 'r', 'R'], [0, 2, 'b', 'R'], [8, 0, 'b', 'P'], [8, 9, 'r', 'P']]);
+  for (let i = 0; i < 8; i++) {
+    const r = await bots.resolve('level-1').chooseMove(J.cloneState(s), J, { ...ctx('r'), random: bots.seededRandom(i) });
+    assert.strictEqual(name(r.move), 'a4→a7', `seed ${i}`);
+  }
+  // a mate is never thrown away
+  const m = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [0, 1, 'r', 'R'], [8, 2, 'r', 'R']]);
+  for (let i = 0; i < 8; i++) {
+    const r = await bots.resolve('level-2').chooseMove(J.cloneState(m), J, { ...ctx('r'), random: bots.seededRandom(i) });
+    assert.strictEqual(name(r.move), 'i7→i9', `seed ${i}`);
+  }
 });
 
 (async () => {

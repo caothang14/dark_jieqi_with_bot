@@ -17,6 +17,9 @@
   for (const f of window.JieqiBotManifest || []) {
     try { await loadScript(`bots/${f}`); } catch (err) { console.error(err); }
   }
+  // Bots think in a Web Worker (bots/worker.js) so the page stays responsive; main-thread fallback otherwise
+  const botHost = window.JieqiBotWorker ? window.JieqiBotWorker.create() : null;
+  if (botHost) botHost.start();
   const SIDE_VI = { r: 'Đỏ', b: 'Đen' };
   const REASON_VI = {
     checkmate: 'chiếu bí', stalemate: 'hết nước đi', timeout: 'hết giờ',
@@ -45,6 +48,8 @@
   let pendingConfirm = null;
   let selected = -1;
   let botThinking = false;
+  let thinkId = 0;          // incremented to abandon the current bot computation
+  let thinkingSpec = null;  // spec of the bot that is thinking
   let botInfos = [];        // botInfos[i] = info returned by the bot for the move that produced history[i]
   const current = () => history[history.length - 1];
   const displayState = () => revealedState || current();
@@ -67,7 +72,12 @@
     g.innerHTML = s;
   }
 
-  const pos = (i) => ({ left: `${((50 + J.X(i) * 100) / 900) * 100}%`, top: `${((50 + J.Y(i) * 100) / 1000) * 100}%` });
+  // The human's side is at the bottom (Black at the bottom = board rotated 180°)
+  const flipped = () => bottomSide() === 'b';
+  const pos = (i) => {
+    const f = flipped(), x = f ? 8 - J.X(i) : J.X(i), y = f ? 9 - J.Y(i) : J.Y(i);
+    return { left: `${((50 + x * 100) / 900) * 100}%`, top: `${((50 + y * 100) / 1000) * 100}%` };
+  };
   const place = (el, i) => Object.assign(el.style, pos(i));
 
   // ---------- Clock ----------
@@ -120,6 +130,7 @@
     const evalInfo = $('showEval').checked && Bots.lib.eval ? Bots.lib.eval.explain(s, J, 'r') : null;
     const evalValues = new Map(evalInfo ? evalInfo.pieces.map((x) => [x.square, x.value]) : []);
     renderEval(evalInfo);
+    $('boardWrap').classList.toggle('flipped', flipped());
 
     if (s.lastMove) {
       for (const sq of [s.lastMove.from, s.lastMove.to]) {
@@ -209,7 +220,7 @@
         ? `${SIDE_VI[result.winner]} thắng (${reason})`
         : `Hoà (${REASON_VI[result.reason]})`;
     } else {
-      st.className = `status ${s.turn}`;
+      st.className = `status ${s.turn}${botThinking ? ' thinking' : ''}`;
       st.textContent = `Lượt ${SIDE_VI[s.turn]}${inCheck ? ' – đang bị chiếu!' : ''}`
         + `${botThinking ? ` (${playerName(s.turn)} đang nghĩ…)` : ''}${clock.paused ? ' – đang tạm dừng' : ''}`;
     }
@@ -246,7 +257,7 @@
     log.scrollTop = log.scrollHeight;
     $('seed').textContent = history[0].seed;
     const noHuman = !actingSide();
-    $('undo').disabled = (history.length <= 1 && !endResult) || botThinking || noHuman;
+    $('undo').disabled = (!humanMoved() && !endResult) || noHuman;
     $('offerDraw').disabled = !!result || !!pendingConfirm || botThinking || noHuman;
     $('resign').disabled = !!result || !!pendingConfirm || noHuman;
     const anyHidden = current().board.some((p) => p && p.hidden);
@@ -329,18 +340,34 @@
   const playerSpec = (side) => $(side === 'r' ? 'playerR' : 'playerB').value;
   const isBot = (side) => playerSpec(side) !== 'human';
   const playerCache = new Map();
+  /** Resolved bot whose chooseMove/acceptDraw run in the worker when possible. */
   function player(side) {
     const spec = playerSpec(side);
-    if (!playerCache.has(spec)) playerCache.set(spec, Bots.resolve(spec));
+    if (!playerCache.has(spec)) {
+      const local = Bots.resolve(spec);
+      const viaWorker = (type, fallback) => (state, J2, ctx) => (botHost
+        ? botHost.run(type, spec, state, ctx, () => fallback(state, J2, ctx))
+        : fallback(state, J2, ctx));
+      playerCache.set(spec, {
+        ...local,
+        chooseMove: viaWorker('move', local.chooseMove),
+        acceptDraw: viaWorker('draw', local.acceptDraw),
+      });
+    }
     return playerCache.get(spec);
   }
   const playerName = (side) => (isBot(side) ? player(side).name : 'Người');
+  /** Side shown at the bottom: the only human if there is exactly one, otherwise Red. */
+  function bottomSide() {
+    const humans = ['r', 'b'].filter((side) => !isBot(side));
+    return humans.length === 1 ? humans[0] : 'r';
+  }
 
   function botContext(side) {
     const clk = clock.enabled
       ? { myTimeMs: clock.remaining[side], oppTimeMs: clock.remaining[J.opp(side)], incrementMs: clock.incrementMs }
       : null;
-    const budget = Bots.suggestBudget(clk, 1000);
+    const budget = Bots.suggestBudget(clk, 2000);
     const t = performance.now();
     return {
       side, ply: current().ply, random: Math.random, now: () => performance.now(),
@@ -401,16 +428,19 @@
     const side = s.turn;
     if (!isBot(side) || gameResult() || botThinking || pendingConfirm) return;
     while (clock.paused) await sleep(200);
-    if (current() !== s || !isBot(side)) return;
+    if (current() !== s || !isBot(side) || botThinking) return;
+    const my = ++thinkId;
     botThinking = true;
     render();
     const bot = player(side);
+    thinkingSpec = bot.id;
     const t0 = performance.now();
     try {
       const { move, info } = await bot.chooseMove(J.cloneState(s), J, botContext(side));
       const elapsed = performance.now() - t0;
       await sleep(Math.max(0, MIN_BOT_DELAY_MS - elapsed));
-      while (clock.paused) await sleep(200);
+      while (clock.paused && my === thinkId) await sleep(200);
+      if (my !== thinkId) return;   // cancelled meanwhile (undo, new game, player change…)
       botThinking = false;
       if (current() !== s || gameResult() || !isBot(side)) { render(); return; }
       if (!move || !J.getLegalMovesFrom(s, move.from).some((x) => x.to === move.to)) {
@@ -420,6 +450,7 @@
       }
       doMove(move, { ...info, timeMs: Math.round(elapsed) });
     } catch (err) {
+      if (my !== thinkId || (err && err.cancelled)) return;
       botThinking = false;
       console.error('Bot error:', err);
       endGame({ winner: J.opp(side), reason: 'bot-error' });
@@ -427,7 +458,17 @@
     }
   }
 
+  /** Abandon the bot's current computation (the worker is stopped, so it does not keep the CPU busy). */
+  function cancelBot() {
+    if (!botThinking) return;
+    thinkId++;
+    botThinking = false;
+    if (botHost) botHost.cancel();
+  }
+
   function newGame() {
+    cancelBot();
+    applyMode(true);
     createClock();
     history = [J.createGame()];
     botInfos = [null];
@@ -436,13 +477,16 @@
     revealedState = null;
     pendingConfirm = null;
     selected = -1;
-    botThinking = false;
     render();
     maybeBotMove();
   }
 
+  /** Is there a human move to take back? (In vs-computer games the bot's own moves are taken back with it.) */
+  const humanMoved = () => history.slice(1).some((h) => !isBot(h.lastMove.side));
+
   function undo() {
-    if (botThinking) return;
+    if (!endResult && (!humanMoved() || !actingSide())) return;
+    cancelBot();
     // Just resigned / drew / timed out: "Undo" only cancels that result, it does not take back a move
     if (endResult) {
       endResult = null;
@@ -465,6 +509,7 @@
     clock.restore(clockSnaps[clockSnaps.length - 1], history.length > 1 ? current().turn : null);
     selected = -1;
     render();
+    maybeBotMove();   // e.g. back at the start with the bot playing Red
   }
 
   function togglePause() {
@@ -495,10 +540,87 @@
       $(id).appendChild(o);
     }
   }
+  // ---------- Game mode: play vs computer / two players / custom ----------
+  const SETTINGS_KEY = 'cotuong-up.settings';
+  const settings = { mode: 'computer', humanSide: 'r', level: 'level-2' };
+  try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) { /* no storage */ }
+  const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ } };
+  const levels = Bots.levels ? Bots.levels() : [];
+  for (const l of levels) {
+    const o = document.createElement('option');
+    o.value = l.id;
+    o.textContent = l.levelName;
+    $('level').appendChild(o);
+  }
+  if (!levels.some((l) => l.id === settings.level) && levels.length) settings.level = levels[Math.min(1, levels.length - 1)].id;
+  if (!['computer', 'two', 'custom'].includes(settings.mode) || (settings.mode === 'computer' && !levels.length)) settings.mode = 'two';
+  $('humanSide').value = settings.humanSide;
+  $('level').value = settings.level;
+  let gameHumanSide = null;   // the human's side in the current vs-computer game ('random' resolved per game)
+
+  const gameStarted = () => history.length > 1 || !!gameResult();
+
+  /** Player selects that the chosen mode asks for (custom: whatever is selected). */
+  function wantedPlayers(humanSide) {
+    if (settings.mode === 'two') return { r: 'human', b: 'human' };
+    if (settings.mode === 'computer') return humanSide === 'r' ? { r: 'human', b: settings.level } : { r: settings.level, b: 'human' };
+    return { r: $('playerR').value, b: $('playerB').value };
+  }
+
+  /**
+   * Puts the mode's players into the Red/Black selects. Before the first move (or when `atNewGame`) everything
+   * applies right away; mid-game only a level change does (switching sides/mode waits for "Ván mới").
+   */
+  function applyMode(atNewGame = false) {
+    for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.mode === settings.mode);
+    $('modeComputer').hidden = settings.mode !== 'computer';
+    $('modeCustom').hidden = settings.mode !== 'custom';
+    const lvl = levels.find((l) => l.id === settings.level);
+    $('levelDesc').textContent = lvl ? lvl.description : '';
+    if (settings.mode === 'custom') { $('modeNote').hidden = true; return; }
+
+    const now = atNewGame || !gameStarted();
+    let side = gameHumanSide || 'r';
+    if (now) side = gameHumanSide = settings.humanSide === 'random' ? (Math.random() < 0.5 ? 'r' : 'b') : settings.humanSide;
+    else if (settings.humanSide !== 'random') side = settings.humanSide;
+    const want = wantedPlayers(side);
+    const cur = { r: $('playerR').value, b: $('playerB').value };
+    // same seats (only the level differs) can change mid-game; "random" keeps the current side until "Ván mới"
+    const sameSeats = ['r', 'b'].every((s) => (want[s] === 'human') === (cur[s] === 'human'));
+    if (now || sameSeats) {
+      if (want.r !== cur.r || want.b !== cur.b) {
+        cancelBot();
+        $('playerR').value = want.r;
+        $('playerB').value = want.b;
+      }
+      $('modeNote').hidden = true;
+    } else {
+      $('modeNote').hidden = false;
+    }
+  }
+
+  function onModeChange() {
+    saveSettings();
+    applyMode();
+    onPlayersChange();
+  }
+  for (const b of document.querySelectorAll('.tab')) {
+    // switching to "Tuỳ chỉnh" keeps the current players in the Red/Black selects as a starting point
+    b.addEventListener('click', () => {
+      settings.mode = b.dataset.mode;
+      onModeChange();
+    });
+  }
+  $('humanSide').addEventListener('change', () => { settings.humanSide = $('humanSide').value; onModeChange(); });
+  $('level').addEventListener('change', () => { settings.level = $('level').value; onModeChange(); });
+
   function onPlayersChange() {
     const descs = ['r', 'b'].filter(isBot).map((side) => `${SIDE_VI[side]}: ${player(side).def.description}`);
     $('botDesc').hidden = !descs.length;
     $('botDesc').textContent = descs.join(' — ');
+    // a different player may now be on move: abandon a computation started for the previous one
+    if (botThinking && isBot(current().turn) && player(current().turn).id !== thinkingSpec) cancelBot();
+    if (botThinking && !isBot(current().turn)) cancelBot();
     selected = -1;
     render();
     maybeBotMove();
@@ -527,6 +649,7 @@
   window.CotuongUI = {
     load(state) {
       newGame();
+      cancelBot();
       history = [state];
       botInfos = [null];
       render();

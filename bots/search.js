@@ -22,10 +22,18 @@
  *   openingOrder order reveal moves by the priority table (lib/opening.js)
  *   revealTopK   >0: below the root only consider the top K reveal moves by priority (captures are always all considered)
  *   revealTopKRoot >0: at the root only consider the top K reveal moves by priority
+ *   revealSkipRoles  e.g. 'RC': below the root never reveal (without capturing) a hidden piece standing on a Rook/Cannon
+ *                square, unless it is attacked or we are in check – those stay hidden for defence ('' = off)
+ *   revealTopKDeveloped >0: below the root, once the side to move has >= developedCount revealed Rooks/Cannons/
+ *                Horses, consider at most this many reveal moves (instead of revealTopK)
+ *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
+ *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
+ *                (no alpha narrowing at the root) and the move is picked at random among those at most
+ *                `randomness` worse than the best (closer to the best = more likely). 0 = always the best move
  *   development  (evaluation weight) reward revealing in priority order
  *   + every evaluation weight (bots/lib/eval.js): 'R.endgame', 'mobility', ...
  */
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
   const Bots = root.JieqiBots;
   const E = Bots.lib.eval;
@@ -81,6 +89,12 @@
   }
 
   const NULL_WINDOW = 0.01;
+  /** Number of revealed Rooks, Cannons and Horses of `side`. */
+  function bigPiecesOut(state, side) {
+    let n = 0;
+    for (const pc of state.board) if (pc && pc.side === side && !pc.hidden && (pc.type === 'R' || pc.type === 'C' || pc.type === 'H')) n++;
+    return n;
+  }
   const naturalLimit = (state) => (state.rules && state.rules.naturalLimit) || 120;
   /** Has pieces other than King and Pawns (avoid null move in Pawn-only endgames – zugzwang-prone). */
   function hasPieces(state, side) {
@@ -109,7 +123,7 @@
       if (k && (k[0] === code || k[1] === code)) return 90000 - (k[0] === code ? 0 : 1);
       if (mover.hidden && p.openingOrder && OP) {
         // reveal move: order by the priority table (rank 1 first), then by history
-        return 60000 - OP.revealRank(state, J, m) * 5000 + Math.min(4000, history[code]);
+        return 60000 - OP.revealRank(state, J, m, p.pawnOrder) * 5000 + Math.min(4000, history[code]);
       }
       return Math.min(80000, history[code]) + (mover.hidden ? 50 : 0);
     }
@@ -290,13 +304,22 @@
       const alpha0 = alpha;
       let best = -INF, bestMove = 0;
       let revealsSeen = 0;
+      // Once we have enough big pieces out, revealing more rarely helps ("3 quân lớn đã ra thì tấn công")
+      let revealK = p.revealTopK;
+      if (revealK > 0 && p.revealTopKDeveloped > 0 && bigPiecesOut(state, state.turn) >= p.developedCount) {
+        revealK = Math.min(revealK, p.revealTopKDeveloped);
+      }
       for (let i = 0; i < moves.length; i++) {
         const m = moves[i];
         const quiet = !state.board[m.to];
-        // Prune reveal moves: below the root only consider the top revealTopK (non-capturing) reveal moves by
+        // Prune reveal moves: below the root only consider the top revealK (non-capturing) reveal moves by
         // priority. Captures, moves of revealed pieces and positions in check: always fully considered.
-        if (p.revealTopK > 0 && quiet && !inCheck && state.board[m.from].hidden && ++revealsSeen > p.revealTopK
-            && best > -INF) continue;
+        if (quiet && !inCheck && state.board[m.from].hidden) {
+          // keep hidden Rook / Cannon squares hidden (defence + option value), unless that piece is attacked
+          if (p.revealSkipRoles && best > -INF && p.revealSkipRoles.includes(state.board[m.from].role)
+              && !J.isSquareAttacked(state.board, m.from, J.opp(state.turn))) continue;
+          if (revealK > 0 && ++revealsSeen > revealK && best > -INF) continue;
+        }
         let v;
         // LMR: late quiet move → search 1 ply shallower with a null window; re-search at full depth if it surprises
         if (p.lmr && depth >= p.lmrMinDepth && i >= p.lmrAfter && quiet && !inCheck) {
@@ -324,6 +347,20 @@
       return best;
     }
 
+    /**
+     * Difficulty levels: pick among the moves scoring at most `randomness` below the best one,
+     * weight = 1 - (best - score) / randomness (the best move has weight 1).
+     */
+    function pickRandomized(best, scores) {
+      const cands = scores.filter(([, s]) => s >= best.score - p.randomness)
+        .map(([m, s]) => [m, s, 1 - (best.score - s) / p.randomness + 1e-6]);
+      let r = ctx.random() * cands.reduce((a, c) => a + c[2], 0);
+      for (const [m, s, wt] of cands) {
+        if ((r -= wt) <= 0) return { ...best, move: m, score: s, picked: cands.length };
+      }
+      return best;
+    }
+
     /** Iterative deepening. Returns { move, score, depth, nodes }. */
     function think(state, timeMs) {
       const t0 = ctx.now();
@@ -338,6 +375,7 @@
       }
       let best = { move: rootMoves[0], score: 0, depth: 0 };
       if (rootMoves.length === 1) return { ...best, nodes };
+      let lastScores = null;                                 // [move, score] of the last completed iteration
 
       for (let depth = 1; depth <= maxDepth; depth++) {
         let alpha = -INF, iterBest = null, iterScore = -INF, searched = 0;
@@ -357,7 +395,7 @@
             m._s = v;
             searched++;
             if (v > iterScore) { iterScore = v; iterBest = m; }
-            if (v > alpha) alpha = v;
+            if (v > alpha && !p.randomness) alpha = v;     // randomness: keep a full window → exact scores
           }
         } catch (e) {
           if (e !== TIMEOUT) throw e;
@@ -366,11 +404,13 @@
           break;
         }
         best = { move: iterBest, score: iterScore, depth };
+        if (p.randomness) lastScores = rootMoves.map((m) => [m, m._s]);
         // best move first for the next iteration
         rootMoves.sort((a, b) => (b === iterBest) - (a === iterBest) || b._s - a._s);
         if (Math.abs(iterScore) > MATE_ZONE) break;                 // mate found
         if (p.depth <= 0 && ctx.now() - t0 > timeMs * 0.45) break;  // next iteration unlikely to finish
       }
+      if (lastScores && Math.abs(best.score) < MATE_ZONE) best = pickRandomized(best, lastScores);
       return { ...best, nodes };
     }
 
@@ -393,7 +433,9 @@
       phaseTime: { opening: 1, middlegame: 1, endgame: 1 },
       qDepth: 6, qHiddenPly: 1, qCheckPly: 2, deltaMargin: 2, chanceBound: 30, probe: true, tt: true, ttSize: 500000,
       nullMove: true, nullR: 2, nullMinDepth: 3, lmr: true, lmrMinDepth: 2, lmrAfter: 4, pvs: false, repetition: true,
-      openingOrder: true, revealTopK: 4, revealTopKRoot: 8, drawThreshold: -0.5,
+      openingOrder: true, revealTopK: 4, revealTopKRoot: 8, randomness: 0, drawThreshold: -0.5,
+      revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge',
+      hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -414,7 +456,12 @@
   Bots.variant('search', {
     id: 'search-v4', name: 'Bot tìm kiếm (bước 4)', hidden: true,
     description: '[Tham chiếu] Bản trước khi có ưu tiên lật quân – giữ lại để đo tiến bộ.',
-    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0 },
+    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0 },
+  });
+  Bots.variant('search', {
+    id: 'search-v5', name: 'Bot tìm kiếm (bước 5)', hidden: true,
+    description: '[Tham chiếu] Bản bước 5 (trước khi có điểm khống chế quân úp) – giữ lại để đo tiến bộ.',
+    params: { qHiddenPly: 1, hiddenTrapped: 0 },
   });
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
@@ -433,4 +480,4 @@
   });
 
   Bots.lib.search = { createSearcher, outcomes, hashState };
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

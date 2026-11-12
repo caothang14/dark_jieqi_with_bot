@@ -1,4 +1,4 @@
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
   const { pick } = root.JieqiBots.lib.common;
 
@@ -14,4 +14,4 @@
       return ctx.random() < ctx.params.drawAcceptRate;
     },
   });
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

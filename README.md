@@ -12,6 +12,41 @@ Engine tests (requires Node.js):
 npm test
 ```
 
+## Game modes
+
+The tabs at the top of the panel:
+
+- **Đấu với máy** (play vs computer): pick your side ("Bạn cầm": Red, Black or random) and a difficulty level ("Mức độ"). When you play Black the board is rotated so your pieces are at the bottom. Changing the level applies immediately (even mid-game); changing side applies at the next "Ván mới" (New game), or immediately if no move has been played yet. The choices are remembered in the browser.
+- **Hai người** (two players): two humans on the same screen.
+- **Tuỳ chỉnh** (custom): choose a Human or any bot for each side (e.g. bot vs bot).
+
+### Difficulty levels (`bots/levels.js`)
+
+All four are variants of the search bot (`level-1` … `level-4`):
+
+| Level | Settings | |
+|---|---|---|
+| Dễ (Easy) | depth 1, `randomness=1.5` | often picks a weaker move (up to ~1.5 Pawns worse) |
+| Vừa (Medium) | depth 2, `randomness=0.4` | occasionally picks a slightly weaker move |
+| Khó (Hard) | full search, at most 0.5 s/move | |
+| Rất khó (Very hard) | full search, at most 2 s/move | = the `search` bot, the strongest one |
+
+`randomness`: every root move gets an exact score and the bot picks at random among the moves at most `randomness` below the best one (the closer to the best, the more likely). It never throws away a forced mate, and a large gain (e.g. a free Rook) is always taken.
+
+Arena check that the levels are ordered (2 s/move cap):
+
+| Match | Result |
+|---|---|
+| Vừa vs Dễ | 90% (+17 =2 −1, 20 games) |
+| Khó vs Vừa | 95% (+19 =0 −1, 20 games) |
+| Rất khó vs Khó | 58% (+7 =0 −5, 12 games – not yet significant, the gap is small) |
+
+### Bots run in a Web Worker
+
+Bots think in a Web Worker (`bots/worker.js`), so the page stays responsive while a bot is thinking. "Đi lại" (Undo), "Ván mới" (New game) or changing players while a bot is thinking stops the computation right away.
+
+This also works when `index.html` is opened via `file://`: browsers block `new Worker('file.js')` there, so the worker is built from a Blob containing the source code of `engine.js`, `bots/registry.js` and every bot file (each file registers its factory function via `JieqiBots.module`, and `Function.prototype.toString` gives back its source). If a worker cannot be created, bots simply run on the main thread as before.
+
 ## Rules implemented
 
 - Both Kings start face-up; each side's other 15 pieces start face-down on the standard squares.
@@ -78,11 +113,13 @@ Simplifications compared with the full rules (may be added later): the exception
 | `bots/lib/eval.js` | Position evaluation (phase-dependent piece values, mobility, check) |
 | `bots/lib/opening.js` | Priority order for revealing hidden pieces |
 | `bots/random.js`, `bots/greedy.js`, `bots/eval1.js`, `bots/search.js` | Bots: random, greedy, 1-ply evaluation, multi-ply search |
+| `bots/levels.js` | Difficulty levels for "Đấu với máy" (variants of the search bot) |
+| `bots/worker.js` | Runs bots in a Web Worker (browser only) |
 | `bots/index.js` | Loads every bot in Node |
 | `arena/match.js` | Plays one bot-vs-bot game, replays a game from a record |
 | `arena/arena.js` | Arena: runs many games in parallel, Elo statistics |
 | `arena/bench.js` | Engine/bot benchmarks, perft to catch rule changes |
-| `test/` | Tests for the rules (including repetition), bots, arena (`npm test`) |
+| `test/` | Tests for the rules (including repetition), bots, arena, worker source (`npm test`) |
 
 ## Engine API (for writing bots)
 
@@ -107,7 +144,7 @@ Piece codes: K King (Tướng), A Advisor (Sĩ), E Elephant (Tượng), H Horse 
 1. Create `bots/<bot-name>.js`:
 
 ```js
-(function (root) {
+JieqiBots.module(function (root) {             // the wrapper lets the bot also run in the Web Worker
   const { VALUE, materialDiff } = root.JieqiBots.lib.common;
   root.JieqiBots.register({
     id: 'my-bot',
@@ -122,8 +159,10 @@ Piece codes: K King (Tướng), A Advisor (Sĩ), E Elephant (Tượng), H Horse 
       return materialDiff(state, J, ctx.side) < 0;
     },
   });
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});
 ```
+
+The factory must only use `root` (not variables from outside the function), because the worker rebuilds it from its source text. A bot file without the `JieqiBots.module` wrapper still works, but runs on the main thread (the UI freezes while it thinks).
 
 2. Add `'<bot-name>.js'` to `bots/manifest.js`. The bot then shows up in the UI (Red/Black selectors) and in the arena.
 
@@ -197,9 +236,10 @@ Looks several moves ahead:
 | `search-fast` | At most 0.3 seconds/move |
 | `search-midgame` | Plays fast in the opening, spends 2.5× as much time in the middlegame |
 | `search-endgame` | Values Horse/Rook/crossed Pawns higher in the endgame, thinks longer once in the endgame |
-| `search-v3`, `search-v4` | Step-3 / step-4 versions (before reveal priorities), hidden from the UI – reference points only |
+| `level-1` … `level-4` | Difficulty levels (see "Game modes") |
+| `search-v3`, `search-v4`, `search-v5` | Step-3 / step-4 (before reveal priorities) / step-5 (before `hiddenTrapped`) versions, hidden from the UI – reference points only |
 
-Params: `depth` (fixed depth – reproducible), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, `probe`, `tt`, `lmr`, `nullMove`, `pvs`… plus every evaluation weight. Examples: `--a search:depth=3`, `--a search:lmr=false --b search`.
+Params: `depth` (fixed depth – reproducible), `maxTimeMs`, `phaseTime.middlegame`, `qDepth`, `probe`, `tt`, `lmr`, `nullMove`, `pvs`, `randomness`… plus every evaluation weight. Examples: `--a search:depth=3`, `--a search:lmr=false --b search`.
 
 ### Reveal priorities (`bots/lib/opening.js`)
 
@@ -224,6 +264,24 @@ Results (30 games per option, 0.5 seconds/move, against the previous version –
 
 Starting position: a depth-3 search went from 9 seconds down to 1.5 seconds; at 2 seconds/move the bot reaches depth 3 from the very first move (previously 2).
 
+### Ideas from Jieqi player experience (step 6)
+
+Ideas taken from player guides (mistboard.com, zigavn.com) were implemented as params and each one was played against the current bot (`search`) in the arena at 0.5 s/move. Only the one that clearly helped is on by default; the others stay available as params (off).
+
+| Idea | Param | Games | Score | Kept? |
+|---|---|---|---|---|
+| **"Khống chế quân úp"**: penalty for each own hidden piece that has moves but every target square is attacked (it cannot be revealed safely); the opponent's trapped pieces count for us | `hiddenTrapped=0.3` | 100 | **61% (+60 =2 −38), ≈ +78 Elo** | **yes (default)** |
+| Hidden pieces may not capture in quiescence (much smaller tree in the opening) | `qHiddenPly=0` | 60 | 59% alone, but 45% (40 games) combined with `hiddenTrapped` | no |
+| Reveal fewer moves (2 below the root, 5 at the root) | `revealTopK=2,revealTopKRoot=5` | 30 | 43% | no |
+| Keep hidden Rook/Cannon squares hidden below the root; fewer reveals once 3 big pieces are out | `revealSkipRoles=RC,revealTopKDeveloped=2` | 30 | 50% | no |
+| Bonus for revealed Advisor/Elephant across the river ("Sĩ/Tượng chiến") | `crossedAE=0.5` | 30 | 37% | no |
+| Weaker Horse ("Mã trong cờ úp không mạnh") | `H.middlegame=3.5,H.endgame=4` | 30 | 53% | no (inconclusive) |
+| Reveal Pawns on files 3/7 before edge Pawns | `pawnOrder=c37` | 60 | 52% | no |
+
+Note: 30 games give an error bar of roughly ±120 Elo, so a single 30-game result can be misleading (two ideas that looked good on the first 30 games lost when combined). Only `hiddenTrapped` stayed positive on three different seed sets.
+
+Final check at 2 s/move ("Rất khó"): new `search` vs the previous version `search-v5`: **50% (+10 =0 −10, 20 games)** – no measurable gain at this time control (the error bar is ±170 Elo; the deeper search may already see most of what the penalty encodes). The gain is clear at 0.5 s/move ("Khó").
+
 ### Progress (measured in the arena, 0.3 seconds/move)
 
 | Milestone | Result |
@@ -243,7 +301,7 @@ Starting position: a depth-3 search went from 9 seconds down to 1.5 seconds; at 
 
 Re-measure with `npm run bench` (or `node arena/bench.js search:lmr=false 1,2,3`). `perft(3)` in the bench must stay unchanged after every engine optimisation – a change means the rules were altered by accident.
 
-**Known limitations**: the starting position (perfectly balanced, every move is a reveal) still only reaches depth 2 in ~1 second. Bots run on the main thread, so the UI freezes while a bot is thinking (step 5: Web Worker).
+**Known limitations**: the starting position (perfectly balanced, every move is a reveal) still only reaches depth 2 in ~1 second.
 
 ## Arena (bot vs bot)
 

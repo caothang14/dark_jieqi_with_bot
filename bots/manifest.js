@@ -12,6 +12,7 @@
     'eval1.js',
     'search.js',
     'search_v3.js',
+    'levels.js',
   ];
   if (typeof module !== 'undefined' && module.exports) module.exports = files;
   else root.JieqiBotManifest = files;

@@ -1,4 +1,4 @@
-(function (root) {
+JieqiBots.module(function (root) {
   'use strict';
   const E = root.JieqiBots.lib.eval;
 
@@ -28,4 +28,4 @@
       return E.material(state, J, ctx.side, w) - E.material(state, J, J.opp(ctx.side), w) <= ctx.params.drawThreshold;
     },
   });
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+});

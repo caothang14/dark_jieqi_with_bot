@@ -134,6 +134,30 @@ test('bot does not capture a Pawn blocking the opponent palace centre', async ()
   });
 });
 
+test('crossedAE: revealed Advisor/Elephant across the river get a bonus (off by default)', () => {
+  const s = emptyGame();
+  const e = put(s, 4, 3, 'r', 'E'), a = put(s, 5, 2, 'r', 'A'), home = put(s, 2, 9, 'r', 'E');
+  close(E.pieceValue(s, J, e), 1, 'default: no bonus');
+  const w = E.resolveWeights({ crossedAE: 0.5 });
+  close(E.pieceValue(s, J, e, w), 1.5, 'elephant across');
+  close(E.pieceValue(s, J, a, w), 2.5, 'advisor across');
+  close(E.pieceValue(s, J, home, w), 1, 'elephant at home');
+});
+
+test('hiddenTrapped: a hidden piece whose every move lands on an attacked square', () => {
+  const s = emptyGame();
+  // red hidden Pawn e3 (4,6) can only go to e4 (4,5)
+  s.board[J.idx(4, 6)] = { side: 'r', type: null, hidden: true, role: 'P' };
+  s.pools.r = { P: 1 };
+  assert.strictEqual(E.trappedHidden(s, J, 'r'), 0, 'e4 is free');
+  put(s, 0, 5, 'b', 'R');                       // black Rook on rank 4 attacks e4
+  assert.strictEqual(E.trappedHidden(s, J, 'r'), 1, 'e4 attacked → trapped');
+  const w = E.resolveWeights({ hiddenTrapped: 0.4, mobility: 0, check: 0 });
+  const base = E.resolveWeights({ mobility: 0, check: 0 });
+  close(E.evaluate(s, J, 'r', w) - E.evaluate(s, J, 'r', base), -0.4, 'penalty for red');
+  close(E.explain(s, J, 'r', w).score, E.evaluate(s, J, 'r', w), 'explain = evaluate');
+});
+
 (async () => {
   for (const [name, fn] of tests) { await fn(); console.log('✓', name); }
   console.log(`\n${tests.length} tests passed`);

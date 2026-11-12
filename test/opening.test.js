@@ -23,8 +23,18 @@ test('priority table in the starting position (Red)', () => {
   assert.strictEqual(rank('c0', 'a2'), 6, 'Elephant to the edge');
   assert.strictEqual(rank('b2', 'b6'), 7, 'Cannon straight forward');
   assert.strictEqual(rank('b2', 'e2'), 8, 'Cannon sideways');
-  assert.strictEqual(rank('a0', 'a1'), 9, 'Xe');
+  assert.strictEqual(rank('a0', 'a1'), 9, 'Rook');
   assert.strictEqual(rank('b2', 'b9'), 0, 'a capture is not a "plain reveal" move');
+});
+
+test("pawnOrder 'c37': Pawns on files 3/7 before edge Pawns", () => {
+  const s = J.createGame({ seed: 1 });
+  const rank = (a, b) => OP.revealRank(s, J, mv(a, b), 'c37');
+  assert.strictEqual(rank('c3', 'c4'), 1);
+  assert.strictEqual(rank('g3', 'g4'), 1);
+  assert.strictEqual(rank('a3', 'a4'), 2);
+  assert.strictEqual(rank('e3', 'e4'), 3);
+  assert.strictEqual(rank('b0', 'c2'), 5, 'other pieces unchanged');
 });
 
 test('priority table for Black (opposite forward direction)', () => {
