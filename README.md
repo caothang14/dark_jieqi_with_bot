@@ -299,6 +299,32 @@ Arena (0.5 s/move, the same 60 games each time, against `search-v6`): first vers
 
 All six have test positions in `test/search.test.js`. To see why the bot chose a move, use `search:depth=3,debug=true`: `info.root` lists the exact score (and penalty) of every root move. The previous version is kept as the hidden bot `search-v6` for the next arena run.
 
+### King safety and cannon placement (step 8)
+
+Evaluation terms from the user's experience, for both sides (in Pawns). On in `search` (and so in every difficulty level), except "pháo giác", which lost in the arena. The previous version is kept as the hidden bot `search-v7`.
+
+| Idea | Rule | Param in `search` |
+|---|---|---|
+| Horse check threat | Per square an enemy revealed Horse can jump to next move and check our King from, that we do not guard (at most 2.5 squares per Horse) | `horseCheckThreat=0.4` |
+| Enemy central Cannon ("pháo đầu") | Enemy revealed Cannon on our King's file with exactly one piece between, while our King is on its starting square | `cannonFacingKing=0.5` |
+| Own Cannon to the centre | Our revealed Cannon on file e, in the opening, while the opponent has ≥ 2 hidden pieces on its Advisor/Elephant squares | `centralCannon=0.3` |
+| "Pháo giác" | Our revealed Cannon on the opponent's back rank: per enemy hidden piece on an Advisor/Elephant square that it stops from being revealed (every reveal lands on an attacked square or uncovers a Cannon check) | `bottomCannon` – **off** (0.4 tested) |
+| "Pháo trống" | Enemy revealed Cannon on our King's file with nothing between (worse than "pháo đầu"; the defence is to reveal Advisor/Elephant into the centre so two pieces stand between) | `cannonEmptyFile=0.8` |
+
+These terms make the evaluation slower: ~20–25% fewer nodes per second.
+
+Arena, each idea alone vs `search` (40 games, 0.5 s/move, `--seed 601`):
+
+| Idea | Score |
+|---|---|
+| Horse check threat (`horseCheckThreat=0.4`) | **63.7% (+25 =1 −14)** |
+| Pháo đầu + pháo trống (`cannonFacingKing=0.5,cannonEmptyFile=0.8`) | 52.5% (+20 =2 −18) |
+| Own Cannon to the centre (`centralCannon=0.3`) | **58.8% (+23 =1 −16)** |
+| Pháo giác (`bottomCannon=0.4`) | 45.0% (+17 =2 −21) |
+| The two winners together (60 games, `--seed 701`) | **55.8% (+33 =1 −26), ≈ +41 Elo, LOS 82%** |
+
+Decision (user): keep everything except "pháo giác". "Pháo đầu + pháo trống" is on although it was only 52.5% in the arena – the user considers an empty-file Cannon too dangerous to leave unguarded (it decided the game analysed above).
+
 ### Progress (measured in the arena, 0.3 seconds/move)
 
 | Milestone | Result |

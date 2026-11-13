@@ -168,6 +168,65 @@ test('horseReach: squares a revealed Horse can jump to in the opponent half; a b
   close(E.explain(s, J, 'r', w).score, E.evaluate(s, J, 'r', w), 'explain = evaluate');
 });
 
+test('king safety (step 8): Horse check threats', () => {
+  const s = emptyGame();                                    // red King e0 (4,9), black King d9 (3,0)
+  put(s, 2, 5, 'b', 'H');                                   // black Horse c4 can jump to d2 (3,7) and check e0 from there
+  assert.strictEqual(E.horseCheckThreats(s, J, 'r', W), 1);
+  put(s, 4, 8, 'r', 'A');                                   // a red Advisor on e1 guards d2
+  assert.strictEqual(E.horseCheckThreats(s, J, 'r', W), 0);
+});
+
+test("king safety (step 8): enemy Cannon facing the King with one screen ('pháo đầu')", () => {
+  const s = emptyGame();
+  s.board[J.idx(3, 0)] = null; s.board[J.idx(3, 1)] = { side: 'b', type: 'K', hidden: false, role: 'K' }; // keep kings off file e
+  put(s, 4, 3, 'b', 'C');
+  put(s, 4, 6, 'r', 'P');                                   // one screen between Cannon e6 and King e0
+  assert.strictEqual(E.cannonsFacingKing(s, J, 'r'), 1);
+  put(s, 4, 5, 'r', 'P');                                   // two pieces between: no threat
+  assert.strictEqual(E.cannonsFacingKing(s, J, 'r'), 0);
+  s.board[J.idx(4, 5)] = null;
+  s.board[J.idx(4, 9)] = null; put(s, 3, 9, 'r', 'K');      // King left its starting square
+  assert.strictEqual(E.cannonsFacingKing(s, J, 'r'), 0);
+});
+
+test("king safety (step 8): 'pháo trống' – enemy Cannon on the King's file with nothing between", () => {
+  const s = emptyGame();
+  s.board[J.idx(3, 0)] = null; s.board[J.idx(3, 1)] = { side: 'b', type: 'K', hidden: false, role: 'K' };
+  put(s, 4, 3, 'b', 'C');                                   // nothing between Cannon e6 and King e0
+  assert.strictEqual(E.cannonsEmptyFile(s, J, 'r'), 1);
+  assert.strictEqual(E.cannonsFacingKing(s, J, 'r'), 0, 'not a pháo đầu');
+  put(s, 4, 8, 'r', 'A');                                   // Advisor to the palace centre: now a pháo đầu (one screen)
+  assert.strictEqual(E.cannonsEmptyFile(s, J, 'r'), 0);
+  assert.strictEqual(E.cannonsFacingKing(s, J, 'r'), 1);
+  put(s, 4, 7, 'r', 'E');                                   // + Elephant in the centre: two pieces between, safe
+  assert.strictEqual(E.cannonsFacingKing(s, J, 'r'), 0);
+  // with the weights, the defence (Advisor + Elephant in the centre) scores better than the open file
+  const w = E.resolveWeights({ cannonFacingKing: 0.5, cannonEmptyFile: 0.8, mobility: 0, check: 0 });
+  const open = emptyGame(); open.board[J.idx(3, 0)] = null; open.board[J.idx(3, 1)] = s.board[J.idx(3, 1)]; put(open, 4, 3, 'b', 'C');
+  close(E.evaluate(open, J, 'r', w) - E.evaluate(open, J, 'r', E.resolveWeights({ mobility: 0, check: 0 })), -0.8);
+});
+
+test('cannon placement (step 8): central Cannon in the opening, "pháo giác" on the back rank', () => {
+  const t = J.createGame({ seed: 1 });
+  t.board[J.idx(1, 7)] = null; t.board[J.idx(4, 7)] = { side: 'r', type: 'C', hidden: false, role: 'C' };
+  assert.strictEqual(E.centralCannons(t, J, 'r', 'opening'), 1);
+  assert.strictEqual(E.centralCannons(t, J, 'r', 'middlegame'), 0);
+  // red Cannon on b9 (after taking the hidden piece there): moving c9 or d9 would uncover a Cannon check on e9
+  const s = J.createGame({ seed: 1 });
+  s.board[J.idx(1, 0)] = { side: 'r', type: 'C', hidden: false, role: 'C' }; s.board[J.idx(1, 7)] = null;
+  assert.strictEqual(E.bottomCannonControl(s, J, 'r'), 2);
+  assert.strictEqual(E.bottomCannonControl(s, J, 'b'), 0);
+});
+
+test('king safety terms are off by default; explain = evaluate when on', () => {
+  const s = J.createGame({ seed: 1 });
+  s.board[J.idx(1, 0)] = { side: 'r', type: 'C', hidden: false, role: 'C' }; s.board[J.idx(1, 7)] = null;
+  close(E.evaluate(s, J, 'r'), E.evaluate(s, J, 'r', E.resolveWeights({ horseCheckThreat: 0, bottomCannon: 0 })));
+  const w = E.resolveWeights({ horseCheckThreat: 0.4, cannonFacingKing: 0.5, centralCannon: 0.3, bottomCannon: 0.4 });
+  close(E.evaluate(s, J, 'r', w) - E.evaluate(s, J, 'r'), 0.8, 'two controlled pieces × 0.4');
+  close(E.explain(s, J, 'r', w).score, E.evaluate(s, J, 'r', w), 'explain = evaluate');
+});
+
 (async () => {
   for (const [name, fn] of tests) { await fn(); console.log('✓', name); }
   console.log(`\n${tests.length} tests passed`);

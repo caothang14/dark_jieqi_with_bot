@@ -30,6 +30,19 @@ JieqiBots.module(function (root) {
                         // opponent – it cannot be revealed safely ("bị cấm"; the opponent controls it). 0 = off
     horseReach: 0,      // score per square a revealed Horse can jump to in the opponent's half. Makes the bot
                         // block an enemy Horse's legs ("cản mã", e.g. push the Pawn in front of an edge Horse). 0 = off
+    // King safety / cannon placement (step 8, user's experience; all 0 = off until arena-tested):
+    horseCheckThreat: 0,    // per square from which an enemy revealed Horse could check our King next move, that we
+                            // do not guard
+    horseCheckCap: 2.5,     // at most this many squares counted per Horse
+    cannonFacingKing: 0,    // enemy revealed Cannon on our King's file with exactly one piece between ("pháo đầu"),
+                            // while our King is still on its starting square
+    cannonEmptyFile: 0,     // "pháo trống": enemy revealed Cannon on our King's file with NOTHING between (worse than
+                            // "pháo đầu": anything that steps in becomes its screen); defence = reveal Advisor/Elephant
+                            // into the centre so that two pieces stand between
+    centralCannon: 0,       // our revealed Cannon on the centre file (e) in the opening, while the opponent still has
+                            // >= 2 hidden pieces on its Advisor/Elephant squares (it stops them revealing to the centre)
+    bottomCannon: 0,        // "pháo giác": our revealed Cannon on the opponent's back rank, per enemy hidden piece on an
+                            // Advisor/Elephant square that it stops from being revealed safely
     mobility: 0.02,     // score per legal move more than the opponent
     check: 0.3,         // score when giving check
     win: 1000,          // win score (checkmate / opponent has no moves)
@@ -167,6 +180,122 @@ JieqiBots.module(function (root) {
     }
     return n;
   }
+  // ── King safety and cannon placement (step 8) ──────────────────────────
+  const HORSE_JUMPS = [[1, 2], [-1, 2], [1, -2], [-1, -2], [2, 1], [-2, 1], [2, -1], [-2, -1]];
+  /** Does a Horse standing on `from` attack square `to` (leg free)? */
+  function horseHits(board, J, from, to) {
+    const dx = J.X(to) - J.X(from), dy = J.Y(to) - J.Y(from);
+    if (!((Math.abs(dx) === 1 && Math.abs(dy) === 2) || (Math.abs(dx) === 2 && Math.abs(dy) === 1))) return false;
+    const lx = J.X(from) + (Math.abs(dx) === 2 ? Math.sign(dx) : 0), ly = J.Y(from) + (Math.abs(dy) === 2 ? Math.sign(dy) : 0);
+    return !board[J.idx(lx, ly)];
+  }
+
+  /** Squares an enemy Horse can jump to next move and check `side`'s King from, not guarded by `side`. */
+  function horseCheckThreats(state, J, side, w) {
+    const board = state.board, k = J.kingSquare(board, side);
+    if (k < 0) return 0;
+    let total = 0;
+    for (let i = 0; i < 90; i++) {
+      const h = board[i];
+      if (!h || h.hidden || h.side === side || h.type !== 'H') continue;
+      let n = 0;
+      for (const t of J.pseudoTargets(board, i)) {
+        if (t === k || board[t]) continue;                      // only quiet jumps onto a checking square
+        let checks = false;
+        for (const [dx, dy] of HORSE_JUMPS) {
+          if (J.X(t) + dx === J.X(k) && J.Y(t) + dy === J.Y(k)) { checks = true; break; }
+        }
+        if (!checks) continue;
+        const b2 = board.slice(); b2[t] = h; b2[i] = null;
+        if (horseHits(b2, J, t, k) && !J.isSquareAttacked(b2, t, side)) n++;
+      }
+      total += Math.min(n, w.horseCheckCap);
+    }
+    return total;
+  }
+
+  const backRank = (side) => (side === 'r' ? 9 : 0);
+  /** Hidden pieces of `side` still on its Advisor/Elephant starting squares (c, d, f, g of its back rank). */
+  function hiddenAESquares(board, J, side) {
+    let n = 0;
+    for (const x of [2, 3, 5, 6]) { const p = board[J.idx(x, backRank(side))]; if (p && p.hidden && p.side === side) n++; }
+    return n;
+  }
+
+  /**
+   * Enemy revealed Cannon on `side`'s King file, looking from the King towards the opponent:
+   * 1 if it has exactly one piece between ("pháo đầu", only while the King is on its start square), else 0.
+   */
+  function cannonsFacingKing(state, J, side) {
+    const k = J.kingSquare(state.board, side);
+    if (k !== J.idx(4, backRank(side))) return 0;
+    return cannonOnKingFile(state, J, side, k) === 1 ? 1 : 0;
+  }
+
+  /** "Pháo trống": 1 if an enemy revealed Cannon is on `side`'s King file with nothing between (any King square). */
+  function cannonsEmptyFile(state, J, side) {
+    const k = J.kingSquare(state.board, side);
+    return k >= 0 && cannonOnKingFile(state, J, side, k) === 0 ? 1 : 0;
+  }
+
+  /** Pieces between `side`'s King and the nearest enemy revealed Cannon on its file towards the opponent (0/1), or -1. */
+  function cannonOnKingFile(state, J, side, k) {
+    const board = state.board, x = J.X(k), dir = side === 'r' ? -1 : 1;
+    let between = 0;
+    for (let y = J.Y(k) + dir; y >= 0 && y < 10; y += dir) {
+      const p = board[J.idx(x, y)];
+      if (!p) continue;
+      if (p.side !== side && !p.hidden && p.type === 'C') return between;
+      between++;
+      if (between > 1) return -1;
+    }
+    return -1;
+  }
+
+  /** `side`'s revealed Cannons on the centre file in the opening, while the opponent has hidden A/E-square pieces. */
+  function centralCannons(state, J, side, phase) {
+    if (phase !== 'opening' || hiddenAESquares(state.board, J, J.opp(side)) < 2) return 0;
+    let n = 0;
+    for (let y = 0; y < 10; y++) { const p = state.board[J.idx(4, y)]; if (p && p.side === side && !p.hidden && p.type === 'C') n++; }
+    return n;
+  }
+
+  /**
+   * "Pháo giác": `side`'s revealed Cannons on the opponent's back rank; counts the opponent's hidden pieces on
+   * Advisor/Elephant squares that cannot be revealed safely because of that Cannon (they could without it): every
+   * reveal either lands on an attacked square or is illegal (it would uncover a Cannon check on its own King).
+   */
+  function bottomCannonControl(state, J, side) {
+    const board = state.board, enemy = J.opp(side), y = backRank(enemy);
+    let n = 0;
+    for (let x = 0; x < 9; x++) {
+      const c = board[J.idx(x, y)];
+      if (!c || c.side !== side || c.hidden || c.type !== 'C') continue;
+      const without = board.slice(); without[J.idx(x, y)] = null;
+      for (const ax of [2, 3, 5, 6]) {
+        const sq = J.idx(ax, y), p = board[sq];
+        if (!p || !p.hidden || p.side !== enemy) continue;
+        // can it be revealed safely: a legal move (no discovered check on its own King) to an unattacked square
+        const safe = (b) => J.getLegalMoves({ board: b, turn: enemy, pools: state.pools }, { ignoreRepetition: true })
+          .some((m) => m.from === sq && !b[m.to] && (() => { const b2 = b.slice(); b2[m.to] = p; b2[sq] = null; return !J.isSquareAttacked(b2, m.to, side); })());
+        if (!safe(board) && safe(without)) n++;
+      }
+    }
+    return n;
+  }
+
+  /** King safety + cannon placement from `side`'s point of view (0 when all four weights are 0). */
+  function kingSafetyScore(state, J, side, w, phase) {
+    let s = 0;
+    const opp = J.opp(side);
+    if (w.horseCheckThreat) s += w.horseCheckThreat * (horseCheckThreats(state, J, opp, w) - horseCheckThreats(state, J, side, w));
+    if (w.cannonFacingKing) s += w.cannonFacingKing * (cannonsFacingKing(state, J, opp) - cannonsFacingKing(state, J, side));
+    if (w.cannonEmptyFile) s += w.cannonEmptyFile * (cannonsEmptyFile(state, J, opp) - cannonsEmptyFile(state, J, side));
+    if (w.centralCannon) s += w.centralCannon * (centralCannons(state, J, side, phase) - centralCannons(state, J, opp, phase));
+    if (w.bottomCannon) s += w.bottomCannon * (bottomCannonControl(state, J, side) - bottomCannonControl(state, J, opp));
+    return s;
+  }
+
   const horseScore = (state, J, side, w) => (w.horseReach
     ? w.horseReach * (horseReach(state, J, side) - horseReach(state, J, J.opp(side))) : 0);
 
@@ -194,7 +323,7 @@ JieqiBots.module(function (root) {
     let chk = 0;
     if (w.check && J.isInCheck(state, opp)) chk += w.check;
     if (w.check && J.isInCheck(state, side)) chk -= w.check;
-    const ctl = controlScore(state, J, side, w) + horseScore(state, J, side, w);
+    const ctl = controlScore(state, J, side, w) + horseScore(state, J, side, w) + kingSafetyScore(state, J, side, w, phase);
     const score = mat + mob + chk + ctl;
     return { score, terminal: false, phase, material: mat, mobility: mob, check: chk, control: ctl, pieces };
   }
@@ -240,6 +369,9 @@ JieqiBots.module(function (root) {
     }
     if (w.hiddenTrapped) score += controlScore(state, J, side, w);
     if (w.horseReach) score += horseScore(state, J, side, w);
+    if (w.horseCheckThreat || w.cannonFacingKing || w.cannonEmptyFile || w.centralCannon || w.bottomCannon) {
+      score += kingSafetyScore(state, J, side, w, phase);
+    }
     return score;
   }
 
@@ -247,5 +379,6 @@ JieqiBots.module(function (root) {
   lib.eval = {
     DEFAULT_WEIGHTS, resolveWeights, gamePhase, piecesOnBoard,
     typeValueAt, pieceValue, material, evaluate, explain, trappedHidden, horseReach,
+    horseCheckThreats, cannonsFacingKing, cannonsEmptyFile, centralCannons, bottomCannonControl,
   };
 });
