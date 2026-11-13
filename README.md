@@ -47,6 +47,10 @@ Bots think in a Web Worker (`bots/worker.js`), so the page stays responsive whil
 
 This also works when `index.html` is opened via `file://`: browsers block `new Worker('file.js')` there, so the worker is built from a Blob containing the source code of `engine.js`, `bots/registry.js` and every bot file (each file registers its factory function via `JieqiBots.module`, and `Function.prototype.toString` gives back its source). If a worker cannot be created, bots simply run on the main thread as before.
 
+## Publishing (GitHub Pages)
+
+The game is static files, so GitHub Pages serves it straight from the `main` branch. **Before committing an update, run `npm run bump`**: it sets a new version tag (`?v=YYYYMMDD-HHMM`) on every script in `index.html` (ui.js loads the bot files with the same tag). Without it, a browser can mix a new `index.html` with cached old `.js` files (GitHub Pages caches files for ~10 minutes) – on an iPhone this showed an empty board.
+
 ## Rules implemented
 
 - Both Kings start face-up; each side's other 15 pieces start face-down on the standard squares.

@@ -6,7 +6,8 @@
     "test": "node test/engine.test.js && node test/rules.test.js && node test/eval.test.js && node test/bots.test.js && node test/search.test.js && node test/opening.test.js && node test/worker.test.js",
     "arena": "node arena/arena.js",
     "bots": "node arena/arena.js --list",
-    "bench": "node arena/bench.js"
+    "bench": "node arena/bench.js",
+    "bump": "node scripts/bump-version.js"
   },
   "license": "MIT"
 }

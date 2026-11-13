@@ -109,12 +109,13 @@
     </aside>
   </main>
 
-  <script src="engine.js"></script>
-  <script src="clock.js"></script>
-  <script src="bots/registry.js"></script>
-  <script src="bots/manifest.js"></script>
-  <script src="bots/worker.js"></script>
-  <!-- ui.js tự nạp các bot trong bots/manifest.js -->
-  <script src="ui.js"></script>
+  <!-- ?v=: version tag of the files, changed on every update (npm run bump) so browsers never mix cached old files with new ones -->
+  <script src="engine.js?v=20261113-1332"></script>
+  <script src="clock.js?v=20261113-1332"></script>
+  <script src="bots/registry.js?v=20261113-1332"></script>
+  <script src="bots/manifest.js?v=20261113-1332"></script>
+  <script src="bots/worker.js?v=20261113-1332"></script>
+  <!-- ui.js loads the bots listed in bots/manifest.js itself (with the same ?v=) -->
+  <script src="ui.js?v=20261113-1332"></script>
 </body>
 </html>

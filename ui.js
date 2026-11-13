@@ -1,6 +1,11 @@
 /* UI for Cờ Tướng Úp – depends on Jieqi (engine.js), ChessClock (clock.js), JieqiBots (bots/registry.js + manifest). */
 (async function () {
   'use strict';
+  // Version tag of this page's files (index.html loads us as ui.js?v=…): bot files are loaded with the same tag, so
+  // a browser never mixes a cached old file with new ones after an update
+  const VERSION = (() => {
+    try { return new URL(document.currentScript.src).searchParams.get('v') || ''; } catch (e) { return ''; }
+  })();
   const J = window.Jieqi;
   const ChessClock = window.ChessClock;
   const Bots = window.JieqiBots;
@@ -15,7 +20,7 @@
     document.head.appendChild(el);
   });
   for (const f of window.JieqiBotManifest || []) {
-    try { await loadScript(`bots/${f}`); } catch (err) { console.error(err); }
+    try { await loadScript(`bots/${f}${VERSION ? `?v=${VERSION}` : ''}`); } catch (err) { console.error(err); }
   }
   // Bots think in a Web Worker (bots/worker.js) so the page stays responsive; main-thread fallback otherwise
   const botHost = window.JieqiBotWorker ? window.JieqiBotWorker.create() : null;
