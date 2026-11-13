@@ -195,27 +195,27 @@ test('step 9: an edge Pawn holding the enemy hidden edge Pawn is not pushed into
   // Black Pawn a5 controls the red hidden Pawn a3 (its only square a4 is attacked): its job is done, reveal instead
   const s = J.makeMove(J.createGame({ seed: 1 }), { from: J.idx(4, 6), to: J.idx(4, 5) }, { revealAs: 'P' });
   s.board[J.idx(0, 3)] = null; s.board[J.idx(0, 4)] = { side: 'b', type: 'P', hidden: false, role: 'P' }; s.pools.b.P--;
-  const r = await think('search:depth=1,debug=true', s);
+  const r = await think('search-v9:depth=1,debug=true', s);
   const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
   assert.strictEqual(pen('a5', 'a4'), 1);
   assert.notStrictEqual(name(r.move), 'a5→a4');
   // a centre Pawn, or an edge Pawn with no hidden Pawn opposite, is free to advance
   const t = J.cloneState(s);
   t.board[J.idx(0, 6)] = null;
-  const r2 = await think('search:depth=1,debug=true', t);
+  const r2 = await think('search-v9:depth=1,debug=true', t);
   assert.strictEqual(r2.info.root.find((x) => name(x) === 'a5→a4').pen, 0);
 });
 
 test("step 9: 'phi pháo úp' – a hidden Cannon leaping into the opponent's half pays for the chance of a weak piece", async () => {
   const s = J.makeMove(J.createGame({ seed: 1 }), { from: J.idx(4, 6), to: J.idx(4, 5) }, { revealAs: 'P' });
-  const r = await think('search:depth=1,debug=true,revealTopKRoot=0', s);
+  const r = await think('search-v9:depth=1,debug=true,revealTopKRoot=0', s);
   const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
   close(pen('b7', 'b3'), 9 / 15);                       // A2 + E2 + P5 of the 15 hidden black pieces
   assert.strictEqual(pen('b7', 'b5'), 0, 'staying in our half is free');
   // opening only: with 6 pieces off the board (26 left = middlegame) there is no penalty
   const t = J.cloneState(s);
   for (const [x, y] of [[0, 6], [8, 6], [2, 6], [0, 3], [8, 3], [2, 3]]) t.board[J.idx(x, y)] = null;
-  const r2 = await think('search:depth=1,debug=true,revealTopKRoot=0', t);
+  const r2 = await think('search-v9:depth=1,debug=true,revealTopKRoot=0', t);
   assert.strictEqual(r2.info.root.find((x) => name(x) === 'b7→b3').pen, 0);
 });
 
@@ -282,6 +282,49 @@ test('reveals first when the opponent already has a Rook out and we have no big 
   assert.strictEqual(pen('b5', 'a6'), 1, 'Advisor taking a hidden piece');
   assert.strictEqual(pen('b5', 'c4'), 0.3, 'other Advisor moves');
   assert.strictEqual(pen('e3', 'e4'), 0, 'reveal moves are free');
+});
+
+// ── Step 12: revealed-strength balance (user's experience, 2026-11-13) ──
+test('step 12: Pawn row first when equal, back-rank reveals cost when ahead (strength modes)', async () => {
+  const s = J.makeMove(J.createGame({ seed: 1 }), { from: J.idx(4, 6), to: J.idx(4, 5) }, { revealAs: 'P' });  // Red e3e4
+  const pens = async (st) => {
+    const r = await think('search:depth=1,debug=true,controlBonus=0,revealTopKRoot=0', st);
+    return (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
+  };
+  let pen = await pens(s);                                   // 0 vs 0: equal
+  assert.strictEqual(pen('a6', 'a5'), -0.4, 'safe Pawn-row reveal');
+  assert.strictEqual(pen('e6', 'e5'), 0, 'e5 is in the mouth of the Pawn e4 and undefended: no bonus');
+  assert.strictEqual(pen('b9', 'c7'), 0);
+  const t = J.cloneState(s);                                 // Black gets a revealed Rook on e8: ahead by 9
+  t.board[J.idx(4, 1)] = { side: 'b', type: 'R', hidden: false, role: 'P' }; t.pools.b.R--;
+  pen = await pens(t);
+  assert.strictEqual(pen('a6', 'a5'), 0, 'ahead: Pawn row neither rewarded nor penalised');
+  assert.strictEqual(pen('b9', 'c7'), 0.3, 'ahead: back-rank reveal');
+  assert.strictEqual((await think('search-v9:depth=1,debug=true,revealTopKRoot=0', t)).info.root.find((x) => name(x) === 'b9→c7').pen, 0);
+});
+
+test('step 12: behind in revealed strength → reveal instead of the lone Rook raid (game 2026-11-13, move 11)', async () => {
+  const sq = (n) => J.idx('abcdefghi'.indexOf(n[0]), 9 - Number(n[1]));
+  let s = J.createGame({ seed: 1 });
+  for (const [f, t, r, c] of [['i3', 'i4', 'A'], ['i6', 'i5', 'P'], ['g3', 'g4', 'P'], ['i5', 'i4'], ['c3', 'c4', 'P'],
+    ['a6', 'a5', 'R'], ['a3', 'a4', 'P'], ['a5', 'e5'], ['c0', 'e2', 'H'], ['e5', 'e3', null, 'E'], ['b0', 'c2', 'R']]) {
+    s = J.makeMove(s, { from: sq(f), to: sq(t) }, { ...(r ? { revealAs: r } : {}), ...(c ? { captureAs: c } : {}) });
+  }
+  // Black: Rook (9) vs Red Rook + Horse (13) → behind
+  const r = await think('search:depth=2,debug=true', s);
+  const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
+  assert.strictEqual(pen('e3', 'h3'), 1);
+  assert.ok(s.board[r.move.from].hidden, `plays a reveal, not ${name(r.move)}`);
+});
+
+test('step 12: reveal the hidden Advisor a revealed Rook hits next to the King (palaceGuardBonus)', async () => {
+  // Black Rook d7 looks down the open d-file at the red hidden piece d0 next to the King e0
+  const s = fromStart([[3, 2, 'b', 'R']]);
+  const r = await think('search:depth=1,debug=true,revealTopKRoot=0', s);
+  const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
+  assert.strictEqual(pen('d0', 'e1'), -1, 'reveal the piece itself');
+  assert.strictEqual(pen('b2', 'd2'), -1, 'or block the file with a reveal');
+  assert.strictEqual(pen('f0', 'e1'), 0);
 });
 
 (async () => {

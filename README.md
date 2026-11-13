@@ -340,6 +340,24 @@ Previous version kept as the hidden bot `search-v8`.
 
 Arena vs `search-v8` (0.5 s/move): the first, broad versions together lost (60 games, 38.3%: the Pawn rule penalised every Pawn move onto a square attacked by any hidden piece). After narrowing them as above, each alone (40 games, `--seed 901`): edge-Pawn rule **57.5% (+23 −17, ≈ +53 Elo)**, Cannon rule 50.0% (+19 =2 −19, neutral).
 
+### Revealed-strength balance (step 12)
+
+User's experience (2026-11-13), after a game where the bot's Rook went raiding alone for 6 moves while Red revealed 10 pieces. All rules are root-only adjustments of the bot's own moves (like the step-7 habits), opening + middlegame only.
+
+**Revealed strength** = Rook 9, Cannon 4.5, Horse 4, crossed Pawn 1 (Advisors, Elephants, uncrossed Pawns 0). D = ours − theirs; `strengthGap=3`: D ≤ −3 *behind*, D ≥ 3 *ahead*, otherwise *equal*.
+
+| Rule | When | Param |
+|---|---|---|
+| 1. Reveal the Pawn row first (when the landing square is safe: unattacked, or defended and not hit by a revealed P/A/E) | behind, equal | `pawnRowRevealBonus=0.4` |
+| 2. Reveal more pieces instead of playing the revealed ones: quiet move of a revealed piece / revealed piece taking a Pawn or a hidden piece | behind | `behindQuietMalus=1`, `behindCaptureMalus=0.5` |
+| 3. Play the revealed pieces: quiet reveal off the Pawn row | ahead | `aheadRevealMalus=0.3` |
+| 3–4. Control: bonus per enemy hidden piece newly unable to reveal safely (`countTrappedHidden` definition, expectation over our reveal outcomes), penalty per one released | ahead (× 1), equal (× 0.5) | `controlBonus=0.4`, `controlEqualFactor=0.5` |
+| 6. A revealed enemy Rook hits our hidden piece on a back-rank Advisor square next to the King: reveal it or block the line with a reveal | any phase | `palaceGuardBonus=1` |
+
+Exemptions (rules 2–4): taking a revealed R/C/H, the mover attacked and undefended, the move gives check, in check. `developFirstMalus/QuietMalus` (the narrow case "nothing out vs an enemy Rook") are now 0 in `search` – covered by rule 2. Rule 5 (no third consecutive move with the same piece) was postponed. Previous version kept as the hidden bot `search-v9`.
+
+Arena vs `search-v9` (0.5 s/move): as first specified, rule 2 also lifted root reveal pruning (`behindNoRootPrune=true`) → **1 win in 12 games** (the root then holds ~60 moves: far too shallow) – now off. With pruning kept, 76 games (`--seed 1001` + `--seed 1101`, 38 each): **53.3% (+38 =5 −33, ≈ +23 Elo, LOS ≈ 72%)** – the two seed sets disagree (43.4% / 63.2%), so not significant. Rule 6 alone (`search-v9:palaceGuardBonus=1`, 50 games, `--seed 1201`): 52.0% (+25 =2 −23, neutral).
+
 ### Faster search (step 10)
 
 Exact speed-ups – the bot plays exactly the same moves with the same node counts, only faster (checked against the old code on ~45,000 random positions, perft unchanged):

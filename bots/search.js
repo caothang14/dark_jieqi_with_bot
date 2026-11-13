@@ -49,6 +49,18 @@
  *                mouth of the enemy's hidden edge Pawn opposite – that Pawn is already held, reveal a piece instead
  *   cannonLeapMalus root-only, opening only: penalty × P(weak piece: A/E/P) for a hidden Cannon leaping into the
  *                opponent's half
+ *   strengthGap  step 12 (user's experience): compare the revealed strength of both sides (Rook 9, Cannon 4.5,
+ *                Horse 4, crossed Pawn 1) at the root, opening + middlegame only. D <= -gap: "behind", D >= gap:
+ *                "ahead", otherwise "equal". 0 = rules 1–4 off. See balanceAdj().
+ *   pawnRowRevealBonus  (behind / equal) root bonus for safely revealing a hidden piece on our Pawn row
+ *   behindQuietMalus, behindCaptureMalus  (behind) root penalty for quiet moves of revealed pieces / revealed
+ *                pieces capturing a Pawn or a hidden piece – reveal more pieces instead
+ *   behindNoRootPrune  (behind) no root reveal pruning: back-rank reveals are considered too
+ *   aheadRevealMalus  (ahead) root penalty for a quiet reveal of a piece off the Pawn row – play the revealed pieces
+ *   controlBonus, controlEqualFactor  (ahead; equal × factor) root bonus per enemy hidden piece newly kept from
+ *                revealing safely (J.countTrappedHidden definition), penalty per one released
+ *   palaceGuardBonus  root bonus for a quiet reveal that removes a revealed enemy Rook's direct attack on our hidden
+ *                piece on a back-rank Advisor square next to our King ("lên Sĩ khi Xe địch nhắm vào Cung")
  *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
  *   debug        true: no alpha narrowing at the root and info.root = [{ from, to, score, pen }] for every root move
  *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
@@ -137,6 +149,30 @@ JieqiBots.module(function (root) {
   function hasRevealedRook(state, side) {
     for (const pc of state.board) if (pc && pc.side === side && !pc.hidden && pc.type === 'R') return true;
     return false;
+  }
+
+  /** Step 12: strength of `side`'s revealed fighting pieces – Rook 9, Cannon 4.5, Horse 4, crossed Pawn 1. */
+  function revealedStrength(J, state, side) {
+    let s = 0;
+    for (let i = 0; i < 90; i++) {
+      const pc = state.board[i];
+      if (!pc || pc.hidden || pc.side !== side) continue;
+      if (pc.type === 'R') s += 9;
+      else if (pc.type === 'C') s += 4.5;
+      else if (pc.type === 'H') s += 4;
+      else if (pc.type === 'P' && (side === 'r' ? J.Y(i) <= 4 : J.Y(i) >= 5)) s += 1;
+    }
+    return s;
+  }
+  function hasHidden(state, side) {
+    for (const pc of state.board) if (pc && pc.hidden && pc.side === side) return true;
+    return false;
+  }
+  /** Board after moving the piece on m.from to m.to, the piece unchanged (a hidden piece keeps acting by its role). */
+  function boardAfter(state, m) {
+    const b2 = state.board.slice();
+    b2[m.to] = b2[m.from]; b2[m.from] = null;
+    return b2;
   }
 
   /** Number of revealed Rooks, Cannons and Horses of `side`. */
@@ -584,6 +620,124 @@ JieqiBots.module(function (root) {
       return false;
     }
 
+    // ── Step 12: revealed-strength balance (user's experience, 2026-11-13) ──────────────────────────────
+    //  1. reveal the Pawn row first whenever it is safe (behind / equal)
+    //  2. behind in revealed strength → reveal more pieces (back rank too) instead of playing the revealed ones
+    //  3. ahead → play the revealed pieces and keep the enemy's hidden pieces from revealing safely
+    //  4. equal → reveal and control, the search decides
+    //  6. a revealed enemy Rook hitting our hidden piece on a back-rank Advisor square next to the King → reveal
+    //     that piece (or block the line) – game 2026-11-13, the d-file doubled Rooks took d9
+
+    /** 'behind' | 'ahead' | 'equal' for the side to move, or null (rules off / endgame / nothing left to reveal). */
+    function balanceMode(state) {
+      if (!(p.strengthGap > 0) || E.gamePhase(state, w) === 'endgame') return null;
+      const side = state.turn;
+      const d = revealedStrength(J, state, side) - revealedStrength(J, state, J.opp(side));
+      if (d <= -p.strengthGap) return hasHidden(state, side) ? 'behind' : null;
+      return d >= p.strengthGap ? 'ahead' : 'equal';
+    }
+
+    /** Squares of `side`'s hidden pieces that have moves but every target is attacked (cannot reveal safely). */
+    function trappedHidden(board, side) {
+      const map = new Uint8Array(90), out = [];
+      J.attackMap(board, J.opp(side), map);
+      for (let i = 0; i < 90; i++) {
+        const pc = board[i];
+        if (!pc || !pc.hidden || pc.side !== side) continue;
+        const t = J.pseudoTargets(board, i);
+        if (t.length && t.every((sq) => map[sq])) out.push(i);
+      }
+      return out;
+    }
+
+    /** Expected change of the number of enemy hidden pieces that cannot reveal safely (a captured one stays counted). */
+    function controlDelta(state, m, before) {
+      const enemy = J.opp(state.turn), target = state.board[m.to];
+      const base = before.length - (target && target.hidden && before.includes(m.to) ? 1 : 0);
+      let ev = 0;
+      for (const o of outcomes(state, J, m)) {
+        const next = J.makeMove(state, m, { ...(o.opts || {}), fast: true });
+        ev += o.prob * trappedHidden(next.board, enemy).length;
+      }
+      return ev - base;
+    }
+
+    /** Does the move attack the enemy King (a hidden piece by its role)? */
+    function givesCheck(state, m) {
+      const enemy = J.opp(state.turn), b2 = boardAfter(state, m), k = J.kingSquare(b2, enemy);
+      return k >= 0 && J.isSquareAttacked(b2, k, state.turn);
+    }
+
+    /** Revealing on m.to is safe: not attacked, or defended and no revealed enemy Pawn/Advisor/Elephant attacks it. */
+    function safeLanding(state, m) {
+      const side = state.turn, enemy = J.opp(side), b2 = boardAfter(state, m);
+      if (!J.isSquareAttacked(b2, m.to, enemy)) return true;
+      if (!J.isSquareAttacked(b2, m.to, side)) return false;
+      for (let i = 0; i < 90; i++) {
+        const q = b2[i];
+        if (q && q.side === enemy && !q.hidden && (q.type === 'P' || q.type === 'A' || q.type === 'E')
+            && J.pseudoTargets(b2, i).includes(m.to)) return false;
+      }
+      return true;
+    }
+
+    /** Our hidden pieces on a back-rank Advisor square next to our King, attacked directly by a revealed enemy Rook. */
+    function exposedPalaceHidden(board, side) {
+      const enemy = J.opp(side), y = side === 'r' ? 9 : 0, k = J.kingSquare(board, side);
+      if (k < 0) return 0;
+      let n = 0;
+      for (const x of [3, 5]) {
+        const sq = J.idx(x, y), pc = board[sq];
+        if (!pc || !pc.hidden || pc.side !== side) continue;
+        if (Math.abs(J.X(k) - x) > 1 || Math.abs(J.Y(k) - y) > 1) continue;
+        if (revealedRookAttacks(board, sq, enemy)) n++;
+      }
+      return n;
+    }
+
+    /** Is sq attacked by a revealed Rook of `by` (first piece on a file/rank line)? */
+    function revealedRookAttacks(board, sq, by) {
+      const x = sq % 9, y = (sq / 9) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        let nx = x + dx, ny = y + dy;
+        while (nx >= 0 && nx < 9 && ny >= 0 && ny < 10) {
+          const q = board[ny * 9 + nx];
+          if (q) { if (q.side === by && !q.hidden && q.type === 'R') return true; break; }
+          nx += dx; ny += dy;
+        }
+      }
+      return false;
+    }
+
+    /** Root penalty (> 0) or bonus (< 0) from the step-12 rules for our move m. */
+    function balanceAdj(state, m, mode, trapped0) {
+      const mover = state.board[m.from], target = state.board[m.to], side = mover.side;
+      let adj = 0;
+      // rule 6 (any phase): reveal the hidden piece next to the King that a Rook hits, or block the line
+      if (p.palaceGuardBonus > 0 && mover.hidden && !target) {
+        const before = exposedPalaceHidden(state.board, side);
+        if (before && exposedPalaceHidden(boardAfter(state, m), side) < before) adj -= p.palaceGuardBonus;
+      }
+      if (!mode) return adj;
+      // rule 1: the Pawn row first (a hidden piece there always moves as a Pawn)
+      if (mode !== 'ahead' && p.pawnRowRevealBonus > 0 && mover.hidden && !target
+          && J.Y(m.from) === (side === 'r' ? 6 : 3) && safeLanding(state, m)) adj -= p.pawnRowRevealBonus;
+      // common exemptions: taking a big revealed piece, the mover is in danger, the move gives check
+      if (target && !target.hidden && (target.type === 'R' || target.type === 'C' || target.type === 'H')) return adj;
+      if (isThreatened(state, m.from) || givesCheck(state, m)) return adj;
+      // rule 2: behind → reveal instead of playing the revealed pieces
+      if (mode === 'behind' && !mover.hidden) {
+        if (!target) adj += p.behindQuietMalus;
+        else if (target.hidden || target.type === 'P') adj += p.behindCaptureMalus;
+      }
+      // rule 3: ahead → no back-rank reveals, play the revealed pieces
+      if (mode === 'ahead' && mover.hidden && !target && mover.role !== 'P') adj += p.aheadRevealMalus;
+      // rules 3 + 4: keep the enemy's hidden pieces from revealing
+      const cb = mode === 'ahead' ? p.controlBonus : mode === 'equal' ? p.controlBonus * p.controlEqualFactor : 0;
+      if (cb > 0 && trapped0) adj -= cb * controlDelta(state, m, trapped0);
+      return adj;
+    }
+
     /** Iterative deepening. Returns { move, score, depth, nodes }. */
     function think(state, timeMs) {
       const t0 = ctx.now();
@@ -591,14 +745,17 @@ JieqiBots.module(function (root) {
       const maxDepth = p.depth > 0 ? p.depth : p.maxDepth;
       let rootMoves = orderMoves(state, J.getLegalMoves(state));
       // Root pruning: keep only the top revealTopKRoot (non-capturing) reveal moves by priority
-      const keepAll = p.keepThreatened && poolBig(state, state.turn) >= p.keepThreatenedMinBig && hasThreatenedHidden(J, state, state.turn);
+      const mode = balanceMode(state);
+      const keepAll = (p.keepThreatened && poolBig(state, state.turn) >= p.keepThreatenedMinBig && hasThreatenedHidden(J, state, state.turn))
+        || (mode === 'behind' && p.behindNoRootPrune);
       if (p.revealTopKRoot > 0 && !J.isInCheck(state) && !keepAll) {
         let seen = 0;
         const kept = rootMoves.filter((m) => state.board[m.to] || !state.board[m.from].hidden || ++seen <= p.revealTopKRoot);
         if (kept.length) rootMoves = kept;
       }
       const rootInCheck = J.isInCheck(state);
-      for (const m of rootMoves) m._pen = rootInCheck ? 0 : styleMalus(state, m);
+      const trapped0 = mode ? trappedHidden(state.board, J.opp(state.turn)) : null;
+      for (const m of rootMoves) m._pen = rootInCheck ? 0 : +(styleMalus(state, m) + balanceAdj(state, m, mode, trapped0)).toFixed(6);
       let best = { move: rootMoves[0], score: 0, depth: 0 };
       if (rootMoves.length === 1) return { ...best, nodes };
       let lastScores = null;                                 // [move, score] of the last completed iteration
@@ -668,11 +825,15 @@ JieqiBots.module(function (root) {
       hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
       horseReach: 0,        // evaluation weight (off: lost in the arena at 0.3); replaced by the root horseBlockBonus
       cannonRaidMalus: 1.5, cannonRaidChasedFactor: 0.5, hiddenRookCaptureMalus: 1.5,   // expert habits at the root (step 7, not arena-tested yet)
-      developFirstMalus: 1, developFirstQuietMalus: 0.3, guardRookBonus: 2, horseBlockBonus: 1.5,
+      developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 2, horseBlockBonus: 1.5,
       // step 8 evaluation weights (bots/lib/eval.js): Horse check threats, pháo đầu / pháo trống, own Cannon in the
       // centre in the opening. Pháo giác (bottomCannon) stays off – it lost in the arena (45%)
       horseCheckThreat: 0.4, cannonFacingKing: 0.5, cannonEmptyFile: 0.8, centralCannon: 0.3,
       releaseControlMalus: 1, cannonLeapMalus: 1,   // step 9 (user's experience, not arena-tested yet)
+      // step 12: revealed-strength balance (user's experience; replaces developFirst*, which is the narrow case
+      // "we have nothing out, the opponent has a Rook")
+      strengthGap: 3, pawnRowRevealBonus: 0.4, behindQuietMalus: 1, behindCaptureMalus: 0.5, behindNoRootPrune: false,   // no-prune: 0.5 s arena 0–6 (too slow)
+      aheadRevealMalus: 0.3, controlBonus: 0.4, controlEqualFactor: 0.5, palaceGuardBonus: 1,
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -693,30 +854,37 @@ JieqiBots.module(function (root) {
   });
 
   // ── Styles sharing the same algorithm ──
+  // reference variants keep their old behaviour: step-12 rules off, developFirst back on (unless they override it)
+  const STEP12_OFF = { strengthGap: 0, palaceGuardBonus: 0, developFirstMalus: 1, developFirstQuietMalus: 0.3 };
   Bots.variant('search', {
     id: 'search-v4', name: 'Bot tìm kiếm (bước 4)', hidden: true,
     description: '[Tham chiếu] Bản trước khi có ưu tiên lật quân – giữ lại để đo tiến bộ.',
-    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
+    params: { ...STEP12_OFF, openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v5', name: 'Bot tìm kiếm (bước 5)', hidden: true,
     description: '[Tham chiếu] Bản bước 5 (trước khi có điểm khống chế quân úp) – giữ lại để đo tiến bộ.',
-    params: { qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
+    params: { ...STEP12_OFF, qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v6', name: 'Bot tìm kiếm (bước 6)', hidden: true,
     description: '[Tham chiếu] Bản bước 6 (trước khi sửa lỗi khai cuộc: cản mã, cứu quân úp bị đe doạ) – giữ lại để đo tiến bộ.',
-    params: { keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
+    params: { ...STEP12_OFF, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v7', name: 'Bot tìm kiếm (bước 7)', hidden: true,
     description: '[Tham chiếu] Bản bước 7 (trước khi có an toàn Tướng: Mã chiếu, Pháo đầu, Pháo trống, Pháo vào giữa) – giữ lại để đo tiến bộ.',
-    params: { horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
+    params: { ...STEP12_OFF, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v8', name: 'Bot tìm kiếm (bước 8)', hidden: true,
     description: '[Tham chiếu] Bản bước 8 (trước khi có: giữ Tốt khống chế quân úp, hạn chế phi Pháo úp) – giữ lại để đo tiến bộ.',
-    params: { releaseControlMalus: 0, cannonLeapMalus: 0 },
+    params: { ...STEP12_OFF, releaseControlMalus: 0, cannonLeapMalus: 0 },
+  });
+  Bots.variant('search', {
+    id: 'search-v9', name: 'Bot tìm kiếm (bước 11)', hidden: true,
+    description: '[Tham chiếu] Bản trước khi có luật cân bằng quân ngửa (lật hàng Tốt, yếu thì lật thêm, mạnh thì khống chế, lên Sĩ khi Xe nhắm Cung) – giữ lại để đo tiến bộ.',
+    params: { ...STEP12_OFF },
   });
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
