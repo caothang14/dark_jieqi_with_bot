@@ -227,6 +227,21 @@ test('king safety terms are off by default; explain = evaluate when on', () => {
   close(E.explain(s, J, 'r', w).score, E.evaluate(s, J, 'r', w), 'explain = evaluate');
 });
 
+test('fast evaluate (one-pass scan, precomputed King/Horse squares) = explain on random positions', () => {
+  const w = E.resolveWeights({ hiddenTrapped: 0.3, horseCheckThreat: 0.4, cannonFacingKing: 0.5, cannonEmptyFile: 0.8, centralCannon: 0.3, bottomCannon: 0.4 });
+  for (let seed = 1; seed <= 25; seed++) {
+    let s = J.createGame({ seed });
+    for (let i = 0; i < 150 && !s.result; i++) {
+      for (const side of ['r', 'b']) {
+        close(E.evaluate(s, J, side, w), E.explain(s, J, side, w).score);
+        assert.strictEqual(E.horseCheckThreats(s, J, side, w), E.horseCheckThreatsSlow(s, J, side, w));
+      }
+      const ms = J.getLegalMoves(s);
+      s = J.makeMove(s, ms[(i * 7 + seed) % ms.length]);
+    }
+  }
+});
+
 (async () => {
   for (const [name, fn] of tests) { await fn(); console.log('✓', name); }
   console.log(`\n${tests.length} tests passed`);

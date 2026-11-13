@@ -137,4 +137,48 @@ test('100 random games: no crashes, pools stay consistent', () => {
   }
 });
 
+/** Positions from random games (deterministic), for cross-checking fast code against reference versions. */
+function* randomPositions(seeds = 40, plies = 150) {
+  for (let seed = 1; seed <= seeds; seed++) {
+    let s = J.createGame({ seed });
+    for (let i = 0; i < plies && !s.result; i++) {
+      yield s;
+      const ms = J.getLegalMoves(s);
+      s = J.makeMove(s, ms[(i * 7 + seed) % ms.length]);
+    }
+  }
+}
+
+test('speed-ups are exact: legal-move shortcut, attack map, trapped count, one-pass scan', () => {
+  const key = (ms) => ms.map((m) => m.from * 90 + m.to).sort((a, b) => a - b).join(',');
+  const map = new Uint8Array(90);
+  for (const s of randomPositions()) {
+    assert.strictEqual(key(J._debug.getGeometricMoves(s)), key(J._debug.getGeometricMovesSlow(s)));
+    const sc = J.scanPosition(s, {});
+    for (const by of ['r', 'b']) {
+      J.attackMap(s.board, by, map);
+      for (let q = 0; q < 90; q++) assert.strictEqual(!!map[q], J.isSquareAttacked(s.board, q, by));
+      assert.strictEqual(J.countTrappedHidden(s, by), J._debug.countTrappedHiddenSlow(s, by));
+      assert.strictEqual(by === 'r' ? sc.mobR : sc.mobB, J.countPseudoMoves(s, by));
+      assert.strictEqual(by === 'r' ? sc.trapR : sc.trapB, J.countTrappedHidden(s, by));
+      assert.strictEqual(by === 'r' ? sc.checkR : sc.checkB, J.isInCheck(s, by));
+    }
+  }
+});
+
+test('makeMove does not modify the input state or share the moving piece', () => {
+  const s = J.createGame({ seed: 5 });
+  const before = JSON.stringify(s.board);
+  const n = J.makeMove(s, J.getLegalMoves(s)[0]);
+  assert.strictEqual(JSON.stringify(s.board), before);
+  assert.notStrictEqual(n.board[n.lastMove.to], s.board[n.lastMove.from]);
+});
+
+test('revealUnknown (search only): the moving hidden piece stays hidden, pool untouched', () => {
+  const s = J.createGame({ seed: 1 });
+  const n = J.makeMove(s, { from: J.idx(1, 7), to: J.idx(1, 0) }, { revealUnknown: true, captureUnknown: true, fast: true });
+  assert.ok(n.board[J.idx(1, 0)].hidden && n.board[J.idx(1, 0)].role === 'C');
+  assert.deepStrictEqual(n.pools, s.pools);
+});
+
 console.log(`\n${passed} tests passed`);

@@ -16,7 +16,7 @@ npm test
 
 The tabs at the top of the panel:
 
-- **Đấu với máy** (play vs computer): pick your side ("Bạn cầm": Red, Black or random) and a difficulty level ("Mức độ"). When you play Black the board is rotated so your pieces are at the bottom. Changing the level applies immediately (even mid-game); changing side applies at the next "Ván mới" (New game), or immediately if no move has been played yet. The choices are remembered in the browser.
+- **Đấu với máy** (play vs computer): pick your side ("Bạn cầm": Red, Black or random); the computer is always the strongest bot (`level-4` = `search`, ~4 s/move in the opening, ~3 s later). When you play Black the board is rotated so your pieces are at the bottom. Changing side applies at the next "Ván mới" (New game), or immediately if no move has been played yet. The choice is remembered in the browser. (A difficulty selector existed in step 5 and was removed in step 11; the levels are still available in the "Tuỳ chỉnh" tab.)
 - **Hai người** (two players): two humans on the same screen.
 - **Tuỳ chỉnh** (custom): choose a Human or any bot for each side (e.g. bot vs bot).
 
@@ -29,7 +29,7 @@ All four are variants of the search bot (`level-1` … `level-4`):
 | Dễ (Easy) | depth 1, `randomness=1.5` | often picks a weaker move (up to ~1.5 Pawns worse) |
 | Vừa (Medium) | depth 2, `randomness=0.4` | occasionally picks a slightly weaker move |
 | Khó (Hard) | full search, at most 0.5 s/move | |
-| Rất khó (Very hard) | full search, at most 2 s/move | = the `search` bot, the strongest one |
+| Rất khó (Very hard) | full search, ~4 s/move in the opening, ~3 s later | = the `search` bot, the strongest one |
 
 `randomness`: every root move gets an exact score and the bot picks at random among the moves at most `randomness` below the best one (the closer to the best, the more likely). It never throws away a forced mate, and a large gain (e.g. a free Rook) is always taken.
 
@@ -232,7 +232,7 @@ Looks several moves ahead:
 
 | Bot | Style |
 |---|---|
-| `search` | Search bot – at most 2 seconds/move |
+| `search` | Search bot – ~4 s/move in the opening, ~3 s in the middlegame/endgame (`maxTimeMs=4000`, `phaseTime.middlegame/endgame=0.75`) |
 | `search-fast` | At most 0.3 seconds/move |
 | `search-midgame` | Plays fast in the opening, spends 2.5× as much time in the middlegame |
 | `search-endgame` | Values Horse/Rook/crossed Pawns higher in the endgame, thinks longer once in the endgame |
@@ -335,6 +335,22 @@ Decision (user): keep everything except "pháo giác". "Pháo đầu + pháo tr�
 Previous version kept as the hidden bot `search-v8`.
 
 Arena vs `search-v8` (0.5 s/move): the first, broad versions together lost (60 games, 38.3%: the Pawn rule penalised every Pawn move onto a square attacked by any hidden piece). After narrowing them as above, each alone (40 games, `--seed 901`): edge-Pawn rule **57.5% (+23 −17, ≈ +53 Elo)**, Cannon rule 50.0% (+19 =2 −19, neutral).
+
+### Faster search (step 10)
+
+Exact speed-ups – the bot plays exactly the same moves with the same node counts, only faster (checked against the old code on ~45,000 random positions, perft unchanged):
+
+| Change | Why it helps |
+|---|---|
+| Legal-move shortcut | When not in check, a non-King move can only expose our King if it leaves/enters the King's file or rank, or leaves a square diagonally next to the King (Horse leg / Elephant eye). Other moves skip the self-check test |
+| Attack map | One pass marks every square a side attacks, instead of one `isSquareAttacked` call per square (used by the "trapped hidden piece" term) |
+| One-pass evaluation scan | Mobility, check and trapped hidden pieces for both sides from one loop and two attack maps |
+| Cheaper king-safety terms | King and Horse squares collected in the evaluation's main loop; Horse check threats tried in place, no board copies |
+| `makeMove` | Copies the board array but clones only the moving piece (pieces are never modified once on the board) |
+
+Result: depth 3 on the 6 bench positions 4.0 s → 2.0 s (2×), opening positions 16.3 s → 9.2 s; perft(3) 450 → 240 ms. Arena proxy (the old speed = `timeScale=0.56`): **62.5% (+23 =4 −13, ≈ +89 Elo, LOS 95%)** at 0.5 s/move.
+
+Tried and left off (params kept): `qRevealUnknown=true` (a hidden piece capturing in quiescence stays hidden – 3× fewer nodes but 36.3%), `ttKeep=true` (keep the transposition table between moves – 58.8% then 45.0% on a second seed set, ≈ 52% over 80 games).
 
 ### Progress (measured in the arena, 0.3 seconds/move)
 

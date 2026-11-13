@@ -367,7 +367,7 @@
     const clk = clock.enabled
       ? { myTimeMs: clock.remaining[side], oppTimeMs: clock.remaining[J.opp(side)], incrementMs: clock.incrementMs }
       : null;
-    const budget = Bots.suggestBudget(clk, 2000);
+    const budget = Bots.suggestBudget(clk, 4000);
     const t = performance.now();
     return {
       side, ply: current().ply, random: Math.random, now: () => performance.now(),
@@ -542,20 +542,13 @@
   }
   // ---------- Game mode: play vs computer / two players / custom ----------
   const SETTINGS_KEY = 'cotuong-up.settings';
-  const settings = { mode: 'computer', humanSide: 'r', level: 'level-2' };
+  const settings = { mode: 'computer', humanSide: 'r' };
   try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) { /* no storage */ }
   const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ } };
-  const levels = Bots.levels ? Bots.levels() : [];
-  for (const l of levels) {
-    const o = document.createElement('option');
-    o.value = l.id;
-    o.textContent = l.levelName;
-    $('level').appendChild(o);
-  }
-  if (!levels.some((l) => l.id === settings.level) && levels.length) settings.level = levels[Math.min(1, levels.length - 1)].id;
-  if (!['computer', 'two', 'custom'].includes(settings.mode) || (settings.mode === 'computer' && !levels.length)) settings.mode = 'two';
+  // "Đấu với máy" always plays the strongest bot (no difficulty choice for now; other bots: "Tuỳ chỉnh" tab)
+  const COMPUTER_BOT = Bots.get('level-4') ? 'level-4' : 'search';
+  if (!['computer', 'two', 'custom'].includes(settings.mode) || (settings.mode === 'computer' && !Bots.get(COMPUTER_BOT))) settings.mode = 'two';
   $('humanSide').value = settings.humanSide;
-  $('level').value = settings.level;
   let gameHumanSide = null;   // the human's side in the current vs-computer game ('random' resolved per game)
 
   const gameStarted = () => history.length > 1 || !!gameResult();
@@ -563,20 +556,20 @@
   /** Player selects that the chosen mode asks for (custom: whatever is selected). */
   function wantedPlayers(humanSide) {
     if (settings.mode === 'two') return { r: 'human', b: 'human' };
-    if (settings.mode === 'computer') return humanSide === 'r' ? { r: 'human', b: settings.level } : { r: settings.level, b: 'human' };
+    if (settings.mode === 'computer') return humanSide === 'r' ? { r: 'human', b: COMPUTER_BOT } : { r: COMPUTER_BOT, b: 'human' };
     return { r: $('playerR').value, b: $('playerB').value };
   }
 
   /**
    * Puts the mode's players into the Red/Black selects. Before the first move (or when `atNewGame`) everything
-   * applies right away; mid-game only a level change does (switching sides/mode waits for "Ván mới").
+   * applies right away; mid-game, switching sides/mode waits for "Ván mới".
    */
   function applyMode(atNewGame = false) {
     for (const b of document.querySelectorAll('.tab')) b.classList.toggle('active', b.dataset.mode === settings.mode);
     $('modeComputer').hidden = settings.mode !== 'computer';
     $('modeCustom').hidden = settings.mode !== 'custom';
-    const lvl = levels.find((l) => l.id === settings.level);
-    $('levelDesc').textContent = lvl ? lvl.description : '';
+    const bot = Bots.get(COMPUTER_BOT);
+    $('levelDesc').textContent = bot ? bot.description : '';
     if (settings.mode === 'custom') { $('modeNote').hidden = true; return; }
 
     const now = atNewGame || !gameStarted();
@@ -585,7 +578,7 @@
     else if (settings.humanSide !== 'random') side = settings.humanSide;
     const want = wantedPlayers(side);
     const cur = { r: $('playerR').value, b: $('playerB').value };
-    // same seats (only the level differs) can change mid-game; "random" keeps the current side until "Ván mới"
+    // same seats can be (re)applied mid-game; "random" keeps the current side until "Ván mới"
     const sameSeats = ['r', 'b'].every((s) => (want[s] === 'human') === (cur[s] === 'human'));
     if (now || sameSeats) {
       if (want.r !== cur.r || want.b !== cur.b) {
@@ -612,7 +605,6 @@
     });
   }
   $('humanSide').addEventListener('change', () => { settings.humanSide = $('humanSide').value; onModeChange(); });
-  $('level').addEventListener('change', () => { settings.level = $('level').value; onModeChange(); });
 
   function onPlayersChange() {
     const descs = ['r', 'b'].filter(isBot).map((side) => `${SIDE_VI[side]}: ${player(side).def.description}`);

@@ -394,20 +394,47 @@
     const myKing = kingSquare(board, side);
     const moves = [];
     const buf = MOVE_BUF;
+    // Shortcut (exact): when not in check, a non-King move can only expose our King if it leaves or enters the
+    // King's file/rank (Rook / Cannon / flying-general lines, Cannon screens) or leaves a square diagonally next to
+    // the King (the leg of a Horse / the eye of an Elephant attacking it). Other moves need no test.
+    const kx = myKing % W, ky = (myKing / W) | 0;
+    const safeKnown = myKing >= 0 && !isSquareAttacked(board, myKing, enemy);
     for (let from = 0; from < board.length; from++) {
       const p = board[from];
       if (!p || p.side !== side) continue;
       const n = genTargets(board, from, buf, 0);
+      const fx = from % W, fy = (from / W) | 0;
+      const fromRisky = !safeKnown || p.type === 'K' || fx === kx || fy === ky
+        || (Math.abs(fx - kx) === 1 && Math.abs(fy - ky) === 1);
       for (let k = 0; k < n; k++) {
         const to = buf[k];
         const captured = board[to];
         if (capturesOnly && !captured) continue;
+        if (!fromRisky && to % W !== kx && ((to / W) | 0) !== ky) { moves.push({ from, to }); continue; }
         // try the move in place and undo it (no board copy)
         board[to] = p;
         board[from] = null;
         const illegal = isSquareAttacked(board, p.type === 'K' ? to : myKing, enemy);
         board[from] = p;
         board[to] = captured;
+        if (!illegal) moves.push({ from, to });
+      }
+    }
+    return moves;
+  }
+
+  /** Reference version without the shortcut – kept for cross-checking in tests. */
+  function getGeometricMovesSlow(state) {
+    const side = state.turn, board = state.board, enemy = opp(side), myKing = kingSquare(board, side);
+    const moves = [];
+    for (let from = 0; from < board.length; from++) {
+      const p = board[from];
+      if (!p || p.side !== side) continue;
+      for (const to of pseudoTargets(board, from)) {
+        const captured = board[to];
+        board[to] = p; board[from] = null;
+        const illegal = isSquareAttacked(board, p.type === 'K' ? to : myKing, enemy);
+        board[from] = p; board[to] = captured;
         if (!illegal) moves.push({ from, to });
       }
     }
@@ -434,19 +461,144 @@
    * (on the current board) – they cannot be revealed safely. Allocation-free, stops at the first safe square.
    */
   const TRAP_BUF = new Int16Array(64);
+  const TRAP_MAP = new Uint8Array(90);
   function countTrappedHidden(state, side) {
     const board = state.board, enemy = opp(side);
-    let n = 0;
+    let n = 0, mapped = false;
     for (let i = 0; i < board.length; i++) {
       const p = board[i];
       if (!p || !p.hidden || p.side !== side) continue;
       const k = genTargets(board, i, TRAP_BUF, 0);
       if (!k) continue;
+      if (!mapped) { attackMap(board, enemy, TRAP_MAP); mapped = true; }   // one map instead of a test per square
       let safe = false;
-      for (let j = 0; j < k && !safe; j++) if (!isSquareAttacked(board, TRAP_BUF[j], enemy)) safe = true;
+      for (let j = 0; j < k && !safe; j++) if (!TRAP_MAP[TRAP_BUF[j]]) safe = true;
       if (!safe) n++;
     }
     return n;
+  }
+
+  /**
+   * Everything the evaluation needs from one pass over the board (same results as countPseudoMoves,
+   * countTrappedHidden and isInCheck for both sides, computed with one attack map per side):
+   * out = { mobR, mobB, trapR, trapB, checkR, checkB }.
+   */
+  const SCAN_MAP_R = new Uint8Array(90), SCAN_MAP_B = new Uint8Array(90), SCAN_BUF = new Int16Array(64);
+  function scanPosition(state, out) {
+    const board = state.board;
+    attackMap(board, 'r', SCAN_MAP_R);
+    attackMap(board, 'b', SCAN_MAP_B);
+    let mobR = 0, mobB = 0, trapR = 0, trapB = 0, kR = -1, kB = -1;
+    for (let i = 0; i < 90; i++) {
+      const p = board[i];
+      if (!p) continue;
+      if (p.type === 'K') { if (p.side === 'r') kR = i; else kB = i; }
+      const k = genTargets(board, i, SCAN_BUF, 0);
+      const red = p.side === 'r';
+      if (red) mobR += k; else mobB += k;
+      if (p.hidden && k) {
+        const enemyMap = red ? SCAN_MAP_B : SCAN_MAP_R;
+        let safe = false;
+        for (let j = 0; j < k && !safe; j++) if (!enemyMap[SCAN_BUF[j]]) safe = true;
+        if (!safe) { if (red) trapR++; else trapB++; }
+      }
+    }
+    out.mobR = mobR; out.mobB = mobB; out.trapR = trapR; out.trapB = trapB;
+    out.checkR = kR < 0 || !!SCAN_MAP_B[kR];
+    out.checkB = kB < 0 || !!SCAN_MAP_R[kB];
+    return out;
+  }
+
+  /** Reference version (one isSquareAttacked per square) – kept for cross-checking in tests. */
+  function countTrappedHiddenSlow(state, side) {
+    const board = state.board, enemy = opp(side);
+    let n = 0;
+    for (let i = 0; i < board.length; i++) {
+      const p = board[i];
+      if (!p || !p.hidden || p.side !== side) continue;
+      const t = pseudoTargets(board, i);
+      if (t.length && t.every((sq) => isSquareAttacked(board, sq, enemy))) n++;
+    }
+    return n;
+  }
+
+  /**
+   * out[sq] = 1 for every square attacked by side `by` – exactly isSquareAttacked(board, sq, by) for all 90 squares
+   * at once (whatever stands on the square). Hidden pieces attack by role, with the palace / river limits.
+   */
+  function attackMap(board, by, out) {
+    out.fill(0);
+    for (let i = 0; i < 90; i++) {
+      const q = board[i];
+      if (!q || q.side !== by) continue;
+      const x = i % W, y = (i / W) | 0;
+      switch (q.hidden ? q.role : q.type) {
+        case 'R':
+          for (let d = 0; d < 4; d++) {
+            let nx = x + ORTH[d][0], ny = y + ORTH[d][1];
+            while (nx >= 0 && nx < W && ny >= 0 && ny < H) {
+              out[ny * W + nx] = 1;
+              if (board[ny * W + nx]) break;
+              nx += ORTH[d][0]; ny += ORTH[d][1];
+            }
+          }
+          break;
+        case 'C':
+          for (let d = 0; d < 4; d++) {
+            let nx = x + ORTH[d][0], ny = y + ORTH[d][1], screen = false;
+            while (nx >= 0 && nx < W && ny >= 0 && ny < H) {
+              const t = ny * W + nx;
+              if (screen) { out[t] = 1; if (board[t]) break; } else if (board[t]) screen = true;
+              nx += ORTH[d][0]; ny += ORTH[d][1];
+            }
+          }
+          break;
+        case 'K':
+          for (let d = 0; d < 4; d++) {
+            const nx = x + ORTH[d][0], ny = y + ORTH[d][1];
+            if (ny >= 0 && ny < H && nx >= 0 && nx < W && inPalace(by, nx, ny)) out[ny * W + nx] = 1;
+          }
+          for (let dy = -1; dy <= 1; dy += 2) {             // flying general: the first piece on the file, if a King
+            for (let ny = y + dy; ny >= 0 && ny < H; ny += dy) {
+              const t = ny * W + x;
+              if (board[t]) { if (board[t].type === 'K') out[t] = 1; break; }
+            }
+          }
+          break;
+        case 'P': {
+          const ny = y + (by === 'r' ? -1 : 1);
+          if (ny >= 0 && ny < H) out[ny * W + x] = 1;
+          if (crossedRiver(by, y)) { if (x > 0) out[i - 1] = 1; if (x < W - 1) out[i + 1] = 1; }
+          break;
+        }
+        case 'H':
+          for (let d = 0; d < 4; d++) {
+            const dx = ORTH[d][0], dy = ORTH[d][1];
+            const lx = x + dx, ly = y + dy;
+            if (lx < 0 || lx >= W || ly < 0 || ly >= H || board[ly * W + lx]) continue;
+            for (let s2 = -1; s2 <= 1; s2 += 2) {
+              const nx = dx !== 0 ? x + 2 * dx : x + s2, ny = dx !== 0 ? y + s2 : y + 2 * dy;
+              if (nx >= 0 && nx < W && ny >= 0 && ny < H) out[ny * W + nx] = 1;
+            }
+          }
+          break;
+        case 'A':
+          for (let d = 0; d < 4; d++) {
+            const nx = x + DIAG[d][0], ny = y + DIAG[d][1];
+            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+            if (!q.hidden || inPalace(by, nx, ny)) out[ny * W + nx] = 1;
+          }
+          break;
+        case 'E':
+          for (let d = 0; d < 4; d++) {
+            const ex = x + DIAG[d][0], ey = y + DIAG[d][1], nx = x + 2 * DIAG[d][0], ny = y + 2 * DIAG[d][1];
+            if (nx < 0 || nx >= W || ny < 0 || ny >= H || board[ey * W + ex]) continue;
+            if (!q.hidden || onOwnHalf(by, ny)) out[ny * W + nx] = 1;
+          }
+          break;
+      }
+    }
+    return out;
   }
 
   function getLegalMovesFrom(state, from) {
@@ -490,6 +642,7 @@
    * opts.fast      – skip legality check and game-result computation (for bot search)
    * opts.trusted   – skip only the legality check (caller already validated the move)
    * opts.captureUnknown – capturing a hidden piece does not draw its identity (search only)
+   * opts.revealUnknown  – a moving hidden piece stays hidden, no identity drawn (search only, an approximation)
    * The result also carries: key (position key), rep (chain of positions since the last capture/reveal – for repetition).
    */
   function makeMove(state, move, opts = {}) {
@@ -497,8 +650,17 @@
     if (!opts.fast && !opts.trusted && !getLegalMoves(state).some((m) => m.from === move.from && m.to === move.to)) {
       throw new Error('Illegal move');
     }
-    const s = cloneState(state);
-    const p = s.board[move.from];
+    // Pieces are never modified once on the board, except the moving one when it is revealed: copy the board
+    // array but only clone the moving piece (much cheaper than cloning all 32 pieces on every move).
+    const s = {
+      ...state,
+      board: state.board.slice(),
+      pools: { r: { ...state.pools.r }, b: { ...state.pools.b } },
+      captured: { r: state.captured.r.slice(), b: state.captured.b.slice() },
+      result: null,
+    };
+    const p = { ...state.board[move.from] };
+    s.board[move.from] = p;
     const target = s.board[move.to];
     const info = {
       from: move.from, to: move.to, side: p.side,
@@ -513,7 +675,7 @@
       info.captured = { side: target.side, type, wasHidden: target.hidden };
       s.captured[p.side].push(info.captured);
     }
-    if (p.hidden) {
+    if (p.hidden && !opts.revealUnknown) {   // revealUnknown (search only): the piece moves but stays hidden
       p.type = drawFromPool(s, p.side, opts.revealAs);
       p.hidden = false;
       info.revealed = p.type;
@@ -772,8 +934,8 @@
     createGame, cloneState,
     getLegalMoves, getLegalMovesFrom, countPseudoMoves, makeMove, revealAll,
     positionKey, repetitionStatus, classifyMove, forbiddenMoves, DEFAULT_RULES,
-    isInCheck, kingSquare, revealProbabilities, isSquareAttacked, pseudoTargets, countTrappedHidden,
-    _debug: { isSquareAttackedSlow, kingsFacing },
+    isInCheck, kingSquare, revealProbabilities, isSquareAttacked, pseudoTargets, countTrappedHidden, attackMap, scanPosition,
+    _debug: { isSquareAttackedSlow, kingsFacing, getGeometricMovesSlow, getGeometricMoves, countTrappedHiddenSlow },
     squareName, toAscii,
   };
 

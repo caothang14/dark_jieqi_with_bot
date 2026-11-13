@@ -15,6 +15,9 @@
  *   chanceBound  score bound at chance nodes (child scores are clamped to [-b, b])
  *   probe        probe first at chance nodes (Star2) – turn off to compare
  *   tt, ttSize   transposition table (on/off, max entries)
+ *   qRevealUnknown in quiescence a hidden piece that captures stays hidden (expected value) instead of branching
+ *                into every identity – approximation, much smaller trees in the opening
+ *   ttKeep       keep the transposition table from one move to the next (same params) instead of starting empty
  *   nullMove, nullR, nullMinDepth   null-move pruning (let the opponent move twice)
  *   lmr, lmrMinDepth, lmrAfter      late move reduction: search later quiet moves 1 ply shallower
  *   pvs          search moves after the first with a null window (Principal Variation Search)
@@ -69,11 +72,13 @@ JieqiBots.module(function (root) {
    * how it moves afterwards). Capturing a hidden piece does not split: the board after the capture is the same for
    * every identity, and leaving the pool unchanged gives exactly the expected probabilities (captureUnknown).
    */
-  function outcomes(state, J, m) {
+  function outcomes(state, J, m, unknownReveal = false) {
     const mover = state.board[m.from];
     const target = state.board[m.to];
     const cap = target && target.hidden ? { captureUnknown: true } : null;
     if (!mover.hidden) return [{ prob: 1, opts: cap }];
+    // approximation (quiescence): the capturing hidden piece stays hidden – one branch instead of up to 6
+    if (unknownReveal) return [{ prob: 1, opts: { ...cap, revealUnknown: true } }];
     const list = Object.entries(J.revealProbabilities(state, mover.side))
       .map(([t, p]) => ({ prob: p, opts: { ...cap, revealAs: t } }));
     return list.sort((a, b) => b.prob - a.prob);
@@ -147,6 +152,19 @@ JieqiBots.module(function (root) {
     return false;
   }
 
+  /** Transposition tables kept between moves, one per set of bot params (both arena bots share one process). */
+  const KEPT_TT = new Map();
+  function keptTable(p) {
+    const key = JSON.stringify(p);
+    let t = KEPT_TT.get(key);
+    if (!t) {
+      if (KEPT_TT.size >= 4) KEPT_TT.clear();
+      t = new Map();
+      KEPT_TT.set(key, t);
+    }
+    return t;
+  }
+
   function createSearcher(J, ctx, w) {
     /** The piece on `sq` is attacked by the opponent and not defended. */
     const isThreatened = (state, sq) => {
@@ -190,7 +208,8 @@ JieqiBots.module(function (root) {
     // ── Transposition table ────────────────────────────────────────────
     // Stores results of positions already searched: reused when reached again (via another move order) and
     // used to try the previous best move first in the next deepening iteration.
-    const TT = new Map();
+    // ttKeep: reuse the table of the previous move (same bot settings) – the next search starts "warm"
+    const TT = p.ttKeep ? keptTable(p) : new Map();
     const EXACT = 0, LOWER = 1, UPPER = 2;
     const ttStore = (key, depth, value, flag, move, ply) => {
       if (TT.size > p.ttSize) TT.clear();
@@ -208,8 +227,8 @@ JieqiBots.module(function (root) {
      * A reveal move is a chance node: take the probability-weighted expectation, with Star2-style pruning:
      * probe first to get an upper bound U_i for each outcome, then search properly with a narrowed window.
      */
-    function moveValue(state, m, alpha, beta, child, probe) {
-      const outs = outcomes(state, J, m);
+    function moveValue(state, m, alpha, beta, child, probe, inQ = false) {
+      const outs = outcomes(state, J, m, inQ && p.qRevealUnknown);
       if (outs.length === 1) {
         const next = J.makeMove(state, m, outs[0].opts ? { ...outs[0].opts, fast: true } : { fast: true });
         return -child(next, -beta, -alpha);
@@ -285,7 +304,7 @@ JieqiBots.module(function (root) {
           const gain = victim.hidden ? HIDDEN_ORDER_VALUE : ORDER_VALUE[victim.type];
           if (best + gain + p.deltaMargin < alpha) continue;
         }
-        const v = moveValue(state, m, alpha, beta, child, probe);
+        const v = moveValue(state, m, alpha, beta, child, probe, true);
         if (v > best) best = v;
         if (v > alpha) alpha = v;
         if (alpha >= beta) break;
@@ -638,11 +657,13 @@ JieqiBots.module(function (root) {
     name: 'Bot tìm kiếm',
     description: 'Nhìn trước nhiều nước (alpha-beta + kỳ vọng khi lật quân + tìm tiếp khi đổi quân), đào sâu dần theo thời gian.',
     params: {
-      depth: 0, maxDepth: 30, maxTimeMs: 2000, timeScale: 1,
-      phaseTime: { opening: 1, middlegame: 1, endgame: 1 },
+      // about 4 s per move in the opening (to search deeper there), 3 s in the middlegame and endgame
+      depth: 0, maxDepth: 30, maxTimeMs: 4000, timeScale: 1,
+      phaseTime: { opening: 1, middlegame: 0.75, endgame: 0.75 },
       qDepth: 6, qHiddenPly: 1, qCheckPly: 2, deltaMargin: 2, chanceBound: 30, probe: true, tt: true, ttSize: 500000,
       nullMove: true, nullR: 2, nullMinDepth: 3, lmr: true, lmrMinDepth: 2, lmrAfter: 4, pvs: false, repetition: true,
       openingOrder: true, revealTopK: 4, revealTopKRoot: 8, randomness: 0, drawThreshold: -0.5,
+      ttKeep: false, qRevealUnknown: false,
       revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge', keepThreatened: true, keepThreatenedMinBig: 3,
       hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
       horseReach: 0,        // evaluation weight (off: lost in the arena at 0.3); replaced by the root horseBlockBonus
@@ -700,7 +721,7 @@ JieqiBots.module(function (root) {
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
     description: 'Như Bot tìm kiếm nhưng chỉ nghĩ tối đa 0,3 giây mỗi nước.',
-    params: { maxTimeMs: 300 },
+    params: { maxTimeMs: 300, phaseTime: { opening: 1, middlegame: 1, endgame: 1 } },
   });
   Bots.variant('search', {
     id: 'search-midgame', name: 'Bot tính lâu trung cuộc',

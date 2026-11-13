@@ -191,7 +191,37 @@ JieqiBots.module(function (root) {
   }
 
   /** Squares an enemy Horse can jump to next move and check `side`'s King from, not guarded by `side`. */
-  function horseCheckThreats(state, J, side, w) {
+  function horseCheckThreats(state, J, side, w, k = J.kingSquare(state.board, side), horses = null) {
+    const board = state.board;
+    if (k < 0) return 0;
+    const kx = J.X(k), ky = J.Y(k);
+    let total = 0;
+    const n90 = horses ? horses.length : 90;
+    for (let hi = 0; hi < n90; hi++) {
+      const i = horses ? horses[hi] : hi;                       // horses: precomputed squares of the enemy Horses
+      const h = board[i];
+      if (!h || h.hidden || h.side === side || h.type !== 'H') continue;
+      const hx = J.X(i), hy = J.Y(i);
+      if (Math.abs(hx - kx) > 4 || Math.abs(hy - ky) > 4) continue;   // too far to check next move
+      let n = 0;
+      // the checking squares around the King that this Horse can jump to (quietly) next move
+      for (const [dx, dy] of HORSE_JUMPS) {
+        const cx = kx - dx, cy = ky - dy;
+        if (cx < 0 || cx > 8 || cy < 0 || cy > 9) continue;
+        const c = J.idx(cx, cy);
+        if (board[c] || !horseHits(board, J, i, c)) continue;
+        board[c] = h; board[i] = null;                          // try the jump in place
+        const ok = horseHits(board, J, c, k) && !J.isSquareAttacked(board, c, side);
+        board[i] = h; board[c] = null;
+        if (ok) n++;
+      }
+      total += Math.min(n, w.horseCheckCap);
+    }
+    return total;
+  }
+
+  /** Reference version (pseudoTargets + board copies) – kept for cross-checking in tests. */
+  function horseCheckThreatsSlow(state, J, side, w) {
     const board = state.board, k = J.kingSquare(board, side);
     if (k < 0) return 0;
     let total = 0;
@@ -200,11 +230,9 @@ JieqiBots.module(function (root) {
       if (!h || h.hidden || h.side === side || h.type !== 'H') continue;
       let n = 0;
       for (const t of J.pseudoTargets(board, i)) {
-        if (t === k || board[t]) continue;                      // only quiet jumps onto a checking square
+        if (t === k || board[t]) continue;
         let checks = false;
-        for (const [dx, dy] of HORSE_JUMPS) {
-          if (J.X(t) + dx === J.X(k) && J.Y(t) + dy === J.Y(k)) { checks = true; break; }
-        }
+        for (const [dx, dy] of HORSE_JUMPS) if (J.X(t) + dx === J.X(k) && J.Y(t) + dy === J.Y(k)) { checks = true; break; }
         if (!checks) continue;
         const b2 = board.slice(); b2[t] = h; b2[i] = null;
         if (horseHits(b2, J, t, k) && !J.isSquareAttacked(b2, t, side)) n++;
@@ -226,15 +254,13 @@ JieqiBots.module(function (root) {
    * Enemy revealed Cannon on `side`'s King file, looking from the King towards the opponent:
    * 1 if it has exactly one piece between ("pháo đầu", only while the King is on its start square), else 0.
    */
-  function cannonsFacingKing(state, J, side) {
-    const k = J.kingSquare(state.board, side);
+  function cannonsFacingKing(state, J, side, k = J.kingSquare(state.board, side)) {
     if (k !== J.idx(4, backRank(side))) return 0;
     return cannonOnKingFile(state, J, side, k) === 1 ? 1 : 0;
   }
 
   /** "Pháo trống": 1 if an enemy revealed Cannon is on `side`'s King file with nothing between (any King square). */
-  function cannonsEmptyFile(state, J, side) {
-    const k = J.kingSquare(state.board, side);
+  function cannonsEmptyFile(state, J, side, k = J.kingSquare(state.board, side)) {
     return k >= 0 && cannonOnKingFile(state, J, side, k) === 0 ? 1 : 0;
   }
 
@@ -285,12 +311,16 @@ JieqiBots.module(function (root) {
   }
 
   /** King safety + cannon placement from `side`'s point of view (0 when all four weights are 0). */
-  function kingSafetyScore(state, J, side, w, phase) {
+  /** pre (optional, from evaluate's board loop): { kR, kB, hR: [squares of red Horses], hB } */
+  function kingSafetyScore(state, J, side, w, phase, pre = null) {
     let s = 0;
     const opp = J.opp(side);
-    if (w.horseCheckThreat) s += w.horseCheckThreat * (horseCheckThreats(state, J, opp, w) - horseCheckThreats(state, J, side, w));
-    if (w.cannonFacingKing) s += w.cannonFacingKing * (cannonsFacingKing(state, J, opp) - cannonsFacingKing(state, J, side));
-    if (w.cannonEmptyFile) s += w.cannonEmptyFile * (cannonsEmptyFile(state, J, opp) - cannonsEmptyFile(state, J, side));
+    const kS = pre ? (side === 'r' ? pre.kR : pre.kB) : J.kingSquare(state.board, side);
+    const kO = pre ? (side === 'r' ? pre.kB : pre.kR) : J.kingSquare(state.board, opp);
+    const hS = pre ? (side === 'r' ? pre.hR : pre.hB) : null, hO = pre ? (side === 'r' ? pre.hB : pre.hR) : null;
+    if (w.horseCheckThreat) s += w.horseCheckThreat * (horseCheckThreats(state, J, opp, w, kO, hS) - horseCheckThreats(state, J, side, w, kS, hO));
+    if (w.cannonFacingKing) s += w.cannonFacingKing * (cannonsFacingKing(state, J, opp, kO) - cannonsFacingKing(state, J, side, kS));
+    if (w.cannonEmptyFile) s += w.cannonEmptyFile * (cannonsEmptyFile(state, J, opp, kO) - cannonsEmptyFile(state, J, side, kS));
     if (w.centralCannon) s += w.centralCannon * (centralCannons(state, J, side, phase) - centralCannons(state, J, opp, phase));
     if (w.bottomCannon) s += w.bottomCannon * (bottomCannonControl(state, J, side) - bottomCannonControl(state, J, opp));
     return s;
@@ -340,6 +370,8 @@ JieqiBots.module(function (root) {
     return { base, pawnProb };
   }
 
+  const SCAN = {};
+  const PRE = { kR: -1, kB: -1, hR: [], hB: [] };
   /** Score from `side`'s point of view (positive = `side` is better). */
   function evaluate(state, J, side, w = DEFAULT_WEIGHTS) {
     if (state.result) return state.result.winner == null ? 0 : state.result.winner === side ? w.win : -w.win;
@@ -347,9 +379,12 @@ JieqiBots.module(function (root) {
     const hs = { r: null, b: null };
     let mat = 0;
     const board = state.board;
+    const pre = PRE; pre.kR = -1; pre.kB = -1; pre.hR.length = 0; pre.hB.length = 0;
     for (let i = 0; i < board.length; i++) {
       const p = board[i];
-      if (!p || p.type === 'K') continue;
+      if (!p) continue;
+      if (p.type === 'K') { if (p.side === 'r') pre.kR = i; else pre.kB = i; continue; }
+      if (p.type === 'H') (p.side === 'r' ? pre.hR : pre.hB).push(i);
       let v;
       if (p.hidden) {
         const h = hs[p.side] || (hs[p.side] = hiddenStats(state, J, p.side, phase, w));
@@ -362,15 +397,27 @@ JieqiBots.module(function (root) {
     }
     const opp = J.opp(side);
     let score = mat;
-    if (w.mobility) score += w.mobility * (mobilityCount(state, J, side) - mobilityCount(state, J, opp));
-    if (w.check) {
-      if (J.isInCheck(state, opp)) score += w.check;
-      if (J.isInCheck(state, side)) score -= w.check;
+    if (J.scanPosition && (w.mobility || w.check || w.hiddenTrapped)) {
+      // one pass: mobility, check and trapped hidden pieces for both sides (same numbers as the calls below)
+      const sc = J.scanPosition(state, SCAN);
+      const red = side === 'r';
+      if (w.mobility) score += w.mobility * (red ? sc.mobR - sc.mobB : sc.mobB - sc.mobR);
+      if (w.check) {
+        if (red ? sc.checkB : sc.checkR) score += w.check;
+        if (red ? sc.checkR : sc.checkB) score -= w.check;
+      }
+      if (w.hiddenTrapped) score += w.hiddenTrapped * (red ? sc.trapB - sc.trapR : sc.trapR - sc.trapB);
+    } else {
+      if (w.mobility) score += w.mobility * (mobilityCount(state, J, side) - mobilityCount(state, J, opp));
+      if (w.check) {
+        if (J.isInCheck(state, opp)) score += w.check;
+        if (J.isInCheck(state, side)) score -= w.check;
+      }
+      if (w.hiddenTrapped) score += controlScore(state, J, side, w);
     }
-    if (w.hiddenTrapped) score += controlScore(state, J, side, w);
     if (w.horseReach) score += horseScore(state, J, side, w);
     if (w.horseCheckThreat || w.cannonFacingKing || w.cannonEmptyFile || w.centralCannon || w.bottomCannon) {
-      score += kingSafetyScore(state, J, side, w, phase);
+      score += kingSafetyScore(state, J, side, w, phase, pre);
     }
     return score;
   }
@@ -379,6 +426,6 @@ JieqiBots.module(function (root) {
   lib.eval = {
     DEFAULT_WEIGHTS, resolveWeights, gamePhase, piecesOnBoard,
     typeValueAt, pieceValue, material, evaluate, explain, trappedHidden, horseReach,
-    horseCheckThreats, cannonsFacingKing, cannonsEmptyFile, centralCannons, bottomCannonControl,
+    horseCheckThreats, horseCheckThreatsSlow, cannonsFacingKing, cannonsEmptyFile, centralCannons, bottomCannonControl,
   };
 });
