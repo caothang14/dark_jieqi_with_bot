@@ -325,6 +325,17 @@ Arena, each idea alone vs `search` (40 games, 0.5 s/move, `--seed 601`):
 
 Decision (user): keep everything except "pháo giác". "Pháo đầu + pháo trống" is on although it was only 52.5% in the arena – the user considers an empty-file Cannon too dangerous to leave unguarded (it decided the game analysed above).
 
+### Edge-Pawn standoff and "phi pháo úp" (step 9)
+
+| Problem seen in games | Fix (root penalty on the bot's own move) | Param |
+|---|---|---|
+| The bot pushes its revealed edge Pawn further into the mouth of the enemy's hidden edge Pawn, although that hidden Pawn is already held ("the enemy piece is already dead – leave it") – it should reveal a piece instead | Pushing our revealed Pawn on file a / i forward from our river bank while the enemy's hidden Pawn still stands on its start square opposite (any phase; not when our Pawn is attacked and undefended) | `releaseControlMalus=1` |
+| "Phi pháo úp": the bot leaps a hidden Cannon into the opponent's half – good if it turns out a strong piece, a stranded weak piece otherwise | Opening only: penalty × probability that it turns out an Advisor/Elephant/Pawn (≈ 0.6 at the start) | `cannonLeapMalus=1` |
+
+Previous version kept as the hidden bot `search-v8`.
+
+Arena vs `search-v8` (0.5 s/move): the first, broad versions together lost (60 games, 38.3%: the Pawn rule penalised every Pawn move onto a square attacked by any hidden piece). After narrowing them as above, each alone (40 games, `--seed 901`): edge-Pawn rule **57.5% (+23 −17, ≈ +53 Elo)**, Cannon rule 50.0% (+19 =2 −19, neutral).
+
 ### Progress (measured in the arena, 0.3 seconds/move)
 
 | Milestone | Result |

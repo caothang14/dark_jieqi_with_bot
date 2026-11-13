@@ -16,6 +16,7 @@ const board = (pieces, turn = 'r') => {
 };
 const ctx = (side) => ({ side, random: () => 0.5, now: () => performance.now(), timeBudgetMs: 1000 });
 const think = async (spec, s) => (await bots.resolve(spec).chooseMove(J.cloneState(s), J, ctx(s.turn)));
+const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 const name = (m) => `${J.squareName(m.from)}→${J.squareName(m.to)}`;
 
 test('finds mate in 1', async () => {
@@ -188,6 +189,34 @@ test('a chased hidden Cannon prefers stepping to a safe square over raiding (gam
   const r = await think('search-v7:depth=2,debug=true', s);
   assert.strictEqual(r.info.root.find((x) => name(x) === 'b7→b0').pen, 0.75);
   assert.strictEqual(name(r.move), 'b7→e7');
+});
+
+test('step 9: an edge Pawn holding the enemy hidden edge Pawn is not pushed into its mouth', async () => {
+  // Black Pawn a5 controls the red hidden Pawn a3 (its only square a4 is attacked): its job is done, reveal instead
+  const s = J.makeMove(J.createGame({ seed: 1 }), { from: J.idx(4, 6), to: J.idx(4, 5) }, { revealAs: 'P' });
+  s.board[J.idx(0, 3)] = null; s.board[J.idx(0, 4)] = { side: 'b', type: 'P', hidden: false, role: 'P' }; s.pools.b.P--;
+  const r = await think('search:depth=1,debug=true', s);
+  const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
+  assert.strictEqual(pen('a5', 'a4'), 1);
+  assert.notStrictEqual(name(r.move), 'a5→a4');
+  // a centre Pawn, or an edge Pawn with no hidden Pawn opposite, is free to advance
+  const t = J.cloneState(s);
+  t.board[J.idx(0, 6)] = null;
+  const r2 = await think('search:depth=1,debug=true', t);
+  assert.strictEqual(r2.info.root.find((x) => name(x) === 'a5→a4').pen, 0);
+});
+
+test("step 9: 'phi pháo úp' – a hidden Cannon leaping into the opponent's half pays for the chance of a weak piece", async () => {
+  const s = J.makeMove(J.createGame({ seed: 1 }), { from: J.idx(4, 6), to: J.idx(4, 5) }, { revealAs: 'P' });
+  const r = await think('search:depth=1,debug=true,revealTopKRoot=0', s);
+  const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
+  close(pen('b7', 'b3'), 9 / 15);                       // A2 + E2 + P5 of the 15 hidden black pieces
+  assert.strictEqual(pen('b7', 'b5'), 0, 'staying in our half is free');
+  // opening only: with 6 pieces off the board (26 left = middlegame) there is no penalty
+  const t = J.cloneState(s);
+  for (const [x, y] of [[0, 6], [8, 6], [2, 6], [0, 3], [8, 3], [2, 3]]) t.board[J.idx(x, y)] = null;
+  const r2 = await think('search:depth=1,debug=true,revealTopKRoot=0', t);
+  assert.strictEqual(r2.info.root.find((x) => name(x) === 'b7→b3').pen, 0);
 });
 
 test('keepThreatened only while at least 3 Rooks/Cannons/Horses are still hidden', async () => {

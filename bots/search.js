@@ -42,6 +42,10 @@
  *   cannonRaidMalus applies unless we have a revealed Rook AND the opponent's hidden R/C/H are worth more than ours;
  *                when the Cannon is attacked and undefended it is multiplied by cannonRaidChasedFactor (0.5) if the
  *                Cannon also has a safe quiet move, else 0
+ *   releaseControlMalus root-only penalty for pushing our revealed edge Pawn (a / i) from our river bank into the
+ *                mouth of the enemy's hidden edge Pawn opposite – that Pawn is already held, reveal a piece instead
+ *   cannonLeapMalus root-only, opening only: penalty × P(weak piece: A/E/P) for a hidden Cannon leaping into the
+ *                opponent's half
  *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
  *   debug        true: no alpha narrowing at the root and info.root = [{ from, to, score, pen }] for every root move
  *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
@@ -423,6 +427,12 @@ JieqiBots.module(function (root) {
     function styleMalus(state, m) {
       const mover = state.board[m.from], target = state.board[m.to];
       if (!mover.hidden) {
+        // "the enemy piece is already dead – leave it": our revealed edge Pawn on its river bank already holds the
+        // enemy's hidden edge Pawn opposite (the square between them is ours). Pushing it on walks into that hidden
+        // Pawn's mouth for nothing – reveal a piece instead (any phase; not when our Pawn is itself attacked)
+        if (!target && p.releaseControlMalus > 0 && edgePawnStandoff(state, m) && !isThreatened(state, m.from)) {
+          return p.releaseControlMalus;
+        }
         // behind in development (the opponent has a Rook out, we have no Rook/Cannon/Horse out): reveal first
         if (p.developFirstMalus > 0 && bigPiecesOut(state, mover.side) === 0 && hasRevealedRook(state, J.opp(mover.side))
             && !isThreatened(state, m.from) && !(target && !target.hidden && (target.type === 'R' || target.type === 'C' || target.type === 'H'))) {
@@ -430,7 +440,7 @@ JieqiBots.module(function (root) {
         }
         return 0;
       }
-      if (!target) return guardBonus(state, m) + horseBlockBonus(state, m);
+      if (!target) return guardBonus(state, m) + horseBlockBonus(state, m) + cannonLeapMalus(state, m);
       if (!target.hidden && (target.type === 'R' || target.type === 'C' || target.type === 'H')) return 0;
       const threatened = isThreatened(state, m.from);
       // raid only once we have a Rook out AND the opponent's hidden pieces are worth more than ours (the swap of
@@ -445,6 +455,35 @@ JieqiBots.module(function (root) {
       if (threatened) return 0;
       if (mover.role === 'R' && p.hiddenRookCaptureMalus > 0) return p.hiddenRookCaptureMalus;
       return 0;
+    }
+
+    /**
+     * Move m pushes our revealed Pawn on an edge file (a / i) forward from our river bank, while the enemy's hidden
+     * edge Pawn still stands on its start square opposite (so the square we step onto is in its mouth).
+     */
+    function edgePawnStandoff(state, m) {
+      const pc = state.board[m.from];
+      if (!pc || pc.hidden || pc.type !== 'P') return false;
+      const x = J.X(m.from), y = J.Y(m.from);
+      if (x !== 0 && x !== 8 || J.X(m.to) !== x) return false;
+      const red = pc.side === 'r';
+      if (y !== (red ? 5 : 4) || J.Y(m.to) !== (red ? 4 : 5)) return false;
+      const opp = state.board[J.idx(x, red ? 3 : 6)];
+      return !!(opp && opp.hidden && opp.side !== pc.side && opp.role === 'P');
+    }
+
+    /**
+     * "Phi pháo úp": a hidden Cannon leaping (without capturing) into the opponent's half. Fine if it turns out a
+     * Rook/Cannon/Horse, a stranded weak piece otherwise → penalty × probability of a weak piece (A/E/P).
+     */
+    function cannonLeapMalus(state, m) {
+      const mover = state.board[m.from];
+      if (!(p.cannonLeapMalus > 0) || mover.role !== 'C' || isThreatened(state, m.from)) return 0;
+      if (E.gamePhase(state, w) !== 'opening') return 0;              // opening only
+      const y = J.Y(m.to);
+      if (!(mover.side === 'r' ? y <= 4 : y >= 5)) return 0;     // stays in our half
+      const pr = J.revealProbabilities(state, mover.side);
+      return p.cannonLeapMalus * ((pr.A || 0) + (pr.E || 0) + (pr.P || 0));
     }
 
     /** Can the piece on `from` make a non-capturing legal move to a square the opponent does not attack? */
@@ -612,6 +651,7 @@ JieqiBots.module(function (root) {
       // step 8 evaluation weights (bots/lib/eval.js): Horse check threats, pháo đầu / pháo trống, own Cannon in the
       // centre in the opening. Pháo giác (bottomCannon) stays off – it lost in the arena (45%)
       horseCheckThreat: 0.4, cannonFacingKing: 0.5, cannonEmptyFile: 0.8, centralCannon: 0.3,
+      releaseControlMalus: 1, cannonLeapMalus: 1,   // step 9 (user's experience, not arena-tested yet)
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -635,22 +675,27 @@ JieqiBots.module(function (root) {
   Bots.variant('search', {
     id: 'search-v4', name: 'Bot tìm kiếm (bước 4)', hidden: true,
     description: '[Tham chiếu] Bản trước khi có ưu tiên lật quân – giữ lại để đo tiến bộ.',
-    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0 },
+    params: { openingOrder: false, revealTopK: 0, revealTopKRoot: 0, qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v5', name: 'Bot tìm kiếm (bước 5)', hidden: true,
     description: '[Tham chiếu] Bản bước 5 (trước khi có điểm khống chế quân úp) – giữ lại để đo tiến bộ.',
-    params: { qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0 },
+    params: { qHiddenPly: 1, hiddenTrapped: 0, keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v6', name: 'Bot tìm kiếm (bước 6)', hidden: true,
     description: '[Tham chiếu] Bản bước 6 (trước khi sửa lỗi khai cuộc: cản mã, cứu quân úp bị đe doạ) – giữ lại để đo tiến bộ.',
-    params: { keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0 },
+    params: { keepThreatened: false, horseReach: 0, cannonRaidMalus: 0, hiddenRookCaptureMalus: 0, developFirstMalus: 0, developFirstQuietMalus: 0, guardRookBonus: 0, horseBlockBonus: 0, horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-v7', name: 'Bot tìm kiếm (bước 7)', hidden: true,
     description: '[Tham chiếu] Bản bước 7 (trước khi có an toàn Tướng: Mã chiếu, Pháo đầu, Pháo trống, Pháo vào giữa) – giữ lại để đo tiến bộ.',
-    params: { horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0 },
+    params: { horseCheckThreat: 0, cannonFacingKing: 0, cannonEmptyFile: 0, centralCannon: 0, releaseControlMalus: 0, cannonLeapMalus: 0 },
+  });
+  Bots.variant('search', {
+    id: 'search-v8', name: 'Bot tìm kiếm (bước 8)', hidden: true,
+    description: '[Tham chiếu] Bản bước 8 (trước khi có: giữ Tốt khống chế quân úp, hạn chế phi Pháo úp) – giữ lại để đo tiến bộ.',
+    params: { releaseControlMalus: 0, cannonLeapMalus: 0 },
   });
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
