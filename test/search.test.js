@@ -327,6 +327,27 @@ test('step 12: reveal the hidden Advisor a revealed Rook hits next to the King (
   assert.strictEqual(pen('f0', 'e1'), 0);
 });
 
+test('step 13: the King prefers to stay home – recapture with the hidden Advisor, not the King (game 2026-11-13)', async () => {
+  const sq = (n) => J.idx('abcdefghi'.indexOf(n[0]), 9 - Number(n[1]));
+  let s = J.createGame({ seed: 1 });
+  for (const [f, t, r] of [['i3', 'i4', 'P'], ['e6', 'e5', 'E'], ['g3', 'g4', 'C'], ['g9', 'i7', 'E'], ['c3', 'c4', 'P'],
+    ['a6', 'a5', 'C'], ['b0', 'a2', 'P'], ['e5', 'g3'], ['e3', 'e4', 'P'], ['a5', 'a8'], ['f0', 'e1', 'P'], ['g6', 'g5', 'P'],
+    ['g4', 'f4'], ['a8', 'e8'], ['f4', 'f2'], ['b9', 'c7', 'P'], ['f2', 'e2'], ['g5', 'g4'], ['h0', 'g2', 'H'], ['b7', 'b5', 'A'],
+    ['e2', 'e8']]) {
+    s = J.makeMove(s, { from: sq(f), to: sq(t) }, r ? { revealAs: r } : {});
+  }
+  const r = await think('search:depth=2,debug=true', s);
+  const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
+  assert.strictEqual(pen('e9', 'e8'), 1, 'King forward off its start square');
+  assert.notStrictEqual(name(r.move), 'e9→e8');
+  assert.strictEqual(name((await think('search-v10:depth=2', s)).move), 'e9→e8', 'the step-12 bot took with the King');
+  // sideways costs less (strengthGap=0: Black is also "behind" here, rule 2 would add its quiet-move penalty)
+  const t = J.cloneState(s);
+  t.board[sq('d9')] = null;
+  const r2 = await think('search:depth=1,debug=true,strengthGap=0', t);
+  assert.strictEqual(r2.info.root.find((x) => name(x) === 'e9→d9').pen, 0.3);
+});
+
 (async () => {
   for (const [n, fn] of tests) { await fn(); console.log('✓', n); }
   console.log(`\n${tests.length} tests passed`);

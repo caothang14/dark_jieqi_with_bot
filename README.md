@@ -358,6 +358,12 @@ Exemptions (rules 2–4): taking a revealed R/C/H, the mover attacked and undefe
 
 Arena vs `search-v9` (0.5 s/move): as first specified, rule 2 also lifted root reveal pruning (`behindNoRootPrune=true`) → **1 win in 12 games** (the root then holds ~60 moves: far too shallow) – now off. With pruning kept, 76 games (`--seed 1001` + `--seed 1101`, 38 each): **53.3% (+38 =5 −33, ≈ +23 Elo, LOS ≈ 72%)** – the two seed sets disagree (43.4% / 63.2%), so not significant. Rule 6 alone (`search-v9:palaceGuardBonus=1`, 50 games, `--seed 1201`): 52.0% (+25 =2 −23, neutral).
 
+### Keep the King home (step 13)
+
+User's experience (2026-11-13): experts rarely move the King. In a game the bot recaptured a Cannon on e8 with the King (e9xe8) instead of the hidden Advisor-square piece – a near tie (+2.21 vs +1.98 at depth 4), decided by the 1/3 chance that the hidden piece turns out a Pawn, which then stands on the palace centre (`P.palaceCenter = −1`).
+
+Root penalty on the King's **first** move off its start square (e0 / e9): forward `kingUpMalus=1`, sideways `kingSideMalus=0.3`. Opening + middlegame only, while the opponent still has a Rook or Cannon (revealed or hidden); also when the King captures; not when in check. Previous version kept as the hidden bot `search-v10`. Not arena-tested yet.
+
 ### Faster search (step 10)
 
 Exact speed-ups – the bot plays exactly the same moves with the same node counts, only faster (checked against the old code on ~45,000 random positions, perft unchanged):

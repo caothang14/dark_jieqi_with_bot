@@ -61,6 +61,9 @@
  *                revealing safely (J.countTrappedHidden definition), penalty per one released
  *   palaceGuardBonus  root bonus for a quiet reveal that removes a revealed enemy Rook's direct attack on our hidden
  *                piece on a back-rank Advisor square next to our King ("lên Sĩ khi Xe địch nhắm vào Cung")
+ *   kingUpMalus, kingSideMalus  step 13 (user): root penalty for the King's first move off its start square –
+ *                forward (e9→e8 / e0→e1) costs more than sideways – opening + middlegame, while the opponent still
+ *                has a Rook or Cannon (revealed or hidden). Also when the King captures; not when in check
  *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
  *   debug        true: no alpha narrowing at the root and info.root = [{ from, to, score, pen }] for every root move
  *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
@@ -481,6 +484,7 @@ JieqiBots.module(function (root) {
      */
     function styleMalus(state, m) {
       const mover = state.board[m.from], target = state.board[m.to];
+      if (!mover.hidden && mover.type === 'K') return kingLeaveMalus(state, m);
       if (!mover.hidden) {
         // "the enemy piece is already dead – leave it": our revealed edge Pawn on its river bank already holds the
         // enemy's hidden edge Pawn opposite (the square between them is ours). Pushing it on walks into that hidden
@@ -510,6 +514,25 @@ JieqiBots.module(function (root) {
       if (threatened) return 0;
       if (mover.role === 'R' && p.hiddenRookCaptureMalus > 0) return p.hiddenRookCaptureMalus;
       return 0;
+    }
+
+    /**
+     * Step 13 (user, 2026-11-13): experts rarely move the King. Its first move off the start square (e9 / e0) is
+     * penalised: forward (out of the back rank, e.g. recapturing on e8) a lot, sideways a little. Opening and
+     * middlegame only, while the opponent still has a Rook or Cannon on the board or in its pool.
+     */
+    function kingLeaveMalus(state, m) {
+      if (!(p.kingUpMalus > 0 || p.kingSideMalus > 0)) return 0;
+      const side = state.board[m.from].side, home = J.idx(4, side === 'r' ? 9 : 0);
+      if (m.from !== home || E.gamePhase(state, w) === 'endgame') return 0;
+      const enemy = J.opp(side), pool = state.pools[enemy];
+      let heavy = (pool.R || 0) + (pool.C || 0) > 0;
+      for (let i = 0; i < 90 && !heavy; i++) {
+        const pc = state.board[i];
+        if (pc && pc.side === enemy && !pc.hidden && (pc.type === 'R' || pc.type === 'C')) heavy = true;
+      }
+      if (!heavy) return 0;
+      return J.Y(m.to) === J.Y(m.from) ? p.kingSideMalus : p.kingUpMalus;
     }
 
     /**
@@ -834,6 +857,7 @@ JieqiBots.module(function (root) {
       // "we have nothing out, the opponent has a Rook")
       strengthGap: 3, pawnRowRevealBonus: 0.4, behindQuietMalus: 1, behindCaptureMalus: 0.5, behindNoRootPrune: false,   // no-prune: 0.5 s arena 0–6 (too slow)
       aheadRevealMalus: 0.3, controlBonus: 0.4, controlEqualFactor: 0.5, palaceGuardBonus: 1,
+      kingUpMalus: 1, kingSideMalus: 0.3,   // step 13: the King's first move off its start square (user)
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -855,7 +879,8 @@ JieqiBots.module(function (root) {
 
   // ── Styles sharing the same algorithm ──
   // reference variants keep their old behaviour: step-12 rules off, developFirst back on (unless they override it)
-  const STEP12_OFF = { strengthGap: 0, palaceGuardBonus: 0, developFirstMalus: 1, developFirstQuietMalus: 0.3 };
+  const STEP13_OFF = { kingUpMalus: 0, kingSideMalus: 0 };
+  const STEP12_OFF = { ...STEP13_OFF, strengthGap: 0, palaceGuardBonus: 0, developFirstMalus: 1, developFirstQuietMalus: 0.3 };
   Bots.variant('search', {
     id: 'search-v4', name: 'Bot tìm kiếm (bước 4)', hidden: true,
     description: '[Tham chiếu] Bản trước khi có ưu tiên lật quân – giữ lại để đo tiến bộ.',
@@ -885,6 +910,11 @@ JieqiBots.module(function (root) {
     id: 'search-v9', name: 'Bot tìm kiếm (bước 11)', hidden: true,
     description: '[Tham chiếu] Bản trước khi có luật cân bằng quân ngửa (lật hàng Tốt, yếu thì lật thêm, mạnh thì khống chế, lên Sĩ khi Xe nhắm Cung) – giữ lại để đo tiến bộ.',
     params: { ...STEP12_OFF },
+  });
+  Bots.variant('search', {
+    id: 'search-v10', name: 'Bot tìm kiếm (bước 12)', hidden: true,
+    description: '[Tham chiếu] Bản trước khi phạt Tướng rời ô gốc – giữ lại để đo tiến bộ.',
+    params: { ...STEP13_OFF },
   });
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
