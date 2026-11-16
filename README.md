@@ -43,7 +43,7 @@ Arena check that the levels are ordered (2 s/move cap):
 
 ### Bots run in a Web Worker
 
-Bots think in a Web Worker (`bots/worker.js`), so the page stays responsive while a bot is thinking. "Đi lại" (Undo), "Ván mới" (New game) or changing players while a bot is thinking stops the computation right away.
+Bots think in a Web Worker (`bots/worker.js`), so the page stays responsive while a bot is thinking. "Ván mới" (New game) or changing players while a bot is thinking stops the computation right away.
 
 This also works when `index.html` is opened via `file://`: browsers block `new Worker('file.js')` there, so the worker is built from a Blob containing the source code of `engine.js`, `bots/registry.js` and every bot file (each file registers its factory function via `JieqiBots.module`, and `Function.prototype.toString` gives back its source). If a worker cannot be created, bots simply run on the main thread as before.
 
@@ -91,7 +91,7 @@ Simplifications compared with the full rules (may be added later): the exception
 - Choose the time control under "Thời gian" (Time): untimed, 3+2, 5, 10, 10+5, 15+10, 30 minutes, or custom (minutes + seconds added per move).
 - The clock starts after Red's first move. After each move the increment (if any) is added and the clock switches to the opponent.
 - Running out of time loses. Under 10 seconds the clock turns red and shows tenths of a second.
-- "Tạm dừng" (Pause, or the Space key) stops the clock and locks the board. "Đi lại" (Undo) restores the time to exactly what it was before that move.
+- "Tạm dừng" (Pause, or the Space key) stops the clock and locks the board.
 - Changing the time control mid-game takes effect from the next game.
 - The clock logic lives in `clock.js` (class `ChessClock`) and can be reused by bots (e.g. for a bot to budget its thinking time).
 
@@ -100,7 +100,6 @@ Simplifications compared with the full rules (may be added later): the exception
 - **Resign** ("Chịu thua"): with 2 humans the side to move resigns; against a bot the human resigns. Requires confirmation.
 - **Offer a draw** ("Cầu hoà"): with 2 humans the other side clicks Accept / Decline; against a bot the bot decides via its `acceptDraw` function (the greedy bot accepts when it is behind or level in material).
 - **Reveal all hidden pieces** ("Lật hết quân úp"): shown after the game ends; pieces revealed this way get an orange outline. The engine provides `Jieqi.revealAll(state)`.
-- Clicking "Đi lại" (Undo) right after a resignation / draw / timeout cancels that result and play continues.
 
 > If the rules you usually play differ (e.g. revealed Advisors/Elephants stay restricted), change `pseudoTargets` in `engine.js`.
 
@@ -110,12 +109,13 @@ Simplifications compared with the full rules (may be added later): the exception
 |---|---|
 | `engine.js` | Game rules, no DOM. Works in the browser (`window.Jieqi`) and in Node (`require('./engine')`) |
 | `clock.js` | Two-sided clock (increment per move, pause, save/restore on undo) |
-| `ui.js` | Draws the board, handles clicks, undo, move list; Human/bot selection for each side |
+| `ui.js` | Draws the board, handles clicks, move list; Human/bot selection for each side. No undo (removed 2026-11-16). Shows "Cập nhật: dd/mm/yyyy hh:mm" from the `?v=` version tag (`npm run bump`) |
 | `bots/registry.js` | Bot registration + the shared interface (`JieqiBots`) |
 | `bots/manifest.js` | List of bot files – **adding a bot only requires editing this file** |
 | `bots/lib/common.js` | Shared helpers (simple piece values, random pick…) |
 | `bots/lib/eval.js` | Position evaluation (phase-dependent piece values, mobility, check) |
 | `bots/lib/opening.js` | Priority order for revealing hidden pieces |
+| `bots/lib/fastpos.js`, `bots/lib/fastsearch.js` | Fast mutable position (Int8Array board, make/unmake) + the search bot's tree search on it – same results as the engine-state search, ~4–5× faster |
 | `bots/random.js`, `bots/greedy.js`, `bots/eval1.js`, `bots/search.js` | Bots: random, greedy, 1-ply evaluation, multi-ply search |
 | `bots/levels.js` | Difficulty levels for "Đấu với máy" (variants of the search bot) |
 | `bots/worker.js` | Runs bots in a Web Worker (browser only) |
@@ -379,6 +379,34 @@ Exact speed-ups – the bot plays exactly the same moves with the same node coun
 Result: depth 3 on the 6 bench positions 4.0 s → 2.0 s (2×), opening positions 16.3 s → 9.2 s; perft(3) 450 → 240 ms. Arena proxy (the old speed = `timeScale=0.56`): **62.5% (+23 =4 −13, ≈ +89 Elo, LOS 95%)** at 0.5 s/move.
 
 Tried and left off (params kept): `qRevealUnknown=true` (a hidden piece capturing in quiescence stays hidden – 3× fewer nodes but 36.3%), `ttKeep=true` (keep the transposition table between moves – 58.8% then 45.0% on a second seed set, ≈ 52% over 80 games).
+
+### Fast mutable position (step 14)
+
+The engine keeps an immutable state of piece objects (simple and safe for the UI), so the search used to copy the board
+and read strings at every node. The tree below the root now runs on one mutable position that is changed in place
+(`bots/lib/fastpos.js`): an `Int8Array` board (piece code = kind | hidden 8 | Black 16), `make()`/`unmake()`, the
+engine's position key and repetition chain updated incrementally, typed move lists and per-ply buffers (no allocation
+per node). `bots/lib/fastsearch.js` is a line-by-line port of `search()` / `qsearch()` / `moveValue()` / the move
+ordering; the root (iterative deepening, root pruning, style rules) stays in `search.js` and calls it per root move.
+
+It is **exact**: same legal moves in the same order, same position keys, bit-identical evaluation scores (same terms
+summed in the same order), hence the same moves, scores and node counts (`test/fastpos.test.js` cross-checks the
+position against the engine and the evaluation on ~200 random positions, and the search against `fast=false`, also
+on repetition positions). Extra exact speed-ups: an evaluation cache by position key (the Star2 probe and the child's
+stand-pat evaluate the same position – 43% of the evaluations are repeats) and a single pass for material, move counts
+and attack maps.
+
+| Same machine | Before | After |
+|---|---|---|
+| depth 3, 6 bench positions | 2.18 s | 0.42 s (5.2×) |
+| opening, depth 4 | 22.8 s | 5.2 s (4.4×) |
+| middlegame (ply 30) depth 5 / late (ply 60) depth 6 | 2.8 s / 1.7 s | 0.7 s / 0.37 s |
+| 4 s budget: depth reached (opening / ply 30 / ply 60) | 3 / 5 / 6 | 3 + partial 4 / 6 / 7 |
+
+`fast=false` keeps the old engine-state search (the reference). Evaluation terms or search params the fast path does
+not implement (`horseReach`, `bottomCannon`, `development`, `qRevealUnknown`, `ttKeep`, `revealSkipRoles`) fall back
+to it automatically. **A change to the evaluation (`eval.js`) or to the tree search in `search.js` must be mirrored in
+`fastpos.js` / `fastsearch.js`** – `test/fastpos.test.js` fails otherwise.
 
 ### Progress (measured in the arena, 0.3 seconds/move)
 

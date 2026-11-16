@@ -65,6 +65,8 @@
  *                forward (e9→e8 / e0→e1) costs more than sideways – opening + middlegame, while the opponent still
  *                has a Rook or Cannon (revealed or hidden). Also when the King captures; not when in check
  *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
+ *   fast         true (default): search the tree on the fast mutable position (lib/fastpos.js, lib/fastsearch.js);
+ *                false: on engine states (the reference implementation – same results, slower)
  *   debug        true: no alpha narrowing at the root and info.root = [{ from, to, score, pen }] for every root move
  *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
  *                (no alpha narrowing at the root) and the move is picked at random among those at most
@@ -782,6 +784,14 @@ JieqiBots.module(function (root) {
       let best = { move: rootMoves[0], score: 0, depth: 0 };
       if (rootMoves.length === 1) return { ...best, nodes };
       let lastScores = null;                                 // [move, score] of the last completed iteration
+      // The tree below the root runs on the fast mutable position (lib/fastpos.js + lib/fastsearch.js) – same moves,
+      // scores and node counts, several times faster. fast=false (or a feature it lacks) keeps the engine-state search.
+      const FS = Bots.lib.fastsearch, FP = Bots.lib.fastpos;
+      const tree = p.fast && FS && FP && !FS.unsupportedParams(p) && !FP.unsupportedWeights(w)
+        && J._zobrist && J.kingSquare(state.board, 'r') >= 0 && J.kingSquare(state.board, 'b') >= 0
+        ? FS.createFastTree(J, ctx, w, state, TIMEOUT) : null;
+      if (tree) tree.setDeadline(deadline);
+      const value = (m, a, b, depth, child, probe) => (tree ? tree.rootValue(m, a, b, depth) : moveValue(state, m, a, b, child, probe));
 
       for (let depth = 1; depth <= maxDepth; depth++) {
         let alpha = -INF, iterBest = null, iterScore = -INF, searched = 0;
@@ -794,10 +804,10 @@ JieqiBots.module(function (root) {
             let v;
             const pen = m._pen;                            // style penalty: the move must be this much better
             if (p.pvs && searched > 0) {
-              v = moveValue(state, m, alpha + pen, alpha + pen + NULL_WINDOW, child, probe) - pen;
-              if (v > alpha) v = moveValue(state, m, alpha + pen, INF, child, probe) - pen;
+              v = value(m, alpha + pen, alpha + pen + NULL_WINDOW, depth, child, probe) - pen;
+              if (v > alpha) v = value(m, alpha + pen, INF, depth, child, probe) - pen;
             } else {
-              v = moveValue(state, m, alpha + pen, INF, child, probe) - pen;
+              v = value(m, alpha + pen, INF, depth, child, probe) - pen;
             }
             m._s = v;
             searched++;
@@ -819,7 +829,7 @@ JieqiBots.module(function (root) {
       }
       if (p.debug && lastScores) best.root = lastScores.map(([m, sc]) => ({ from: m.from, to: m.to, score: +sc.toFixed(2), pen: m._pen }));
       if (p.randomness && lastScores && Math.abs(best.score) < MATE_ZONE) best = pickRandomized(best, lastScores);
-      return { ...best, nodes };
+      return { ...best, nodes: tree ? tree.nodes() : nodes };
     }
 
     return { think, stats: () => ({ nodes }) };
@@ -844,6 +854,7 @@ JieqiBots.module(function (root) {
       nullMove: true, nullR: 2, nullMinDepth: 3, lmr: true, lmrMinDepth: 2, lmrAfter: 4, pvs: false, repetition: true,
       openingOrder: true, revealTopK: 4, revealTopKRoot: 8, randomness: 0, drawThreshold: -0.5,
       ttKeep: false, qRevealUnknown: false,
+      fast: true,           // tree search on the fast mutable position (lib/fastsearch.js); false = engine states (reference)
       revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge', keepThreatened: true, keepThreatenedMinBig: 3,
       hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
       horseReach: 0,        // evaluation weight (off: lost in the arena at 0.3); replaced by the root horseBlockBonus

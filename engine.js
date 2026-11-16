@@ -936,6 +936,8 @@
     positionKey, repetitionStatus, classifyMove, forbiddenMoves, DEFAULT_RULES,
     isInCheck, kingSquare, revealProbabilities, isSquareAttacked, pseudoTargets, countTrappedHidden, attackMap, scanPosition,
     _debug: { isSquareAttackedSlow, kingsFacing, getGeometricMovesSlow, getGeometricMoves, countTrappedHiddenSlow },
+    // Zobrist tables of the position key – the bots' fast position (bots/lib/fastpos.js) updates the same key incrementally
+    _zobrist: { ZOB, ZPOOL, positionKeyParts, combineKey },
     squareName, toAscii,
   };
 

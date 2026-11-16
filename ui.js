@@ -6,6 +6,12 @@
   const VERSION = (() => {
     try { return new URL(document.currentScript.src).searchParams.get('v') || ''; } catch (e) { return ''; }
   })();
+  // Show the update time of this version (the ?v= tag is YYYYMMDD-HHMM, Vietnam time, set by npm run bump)
+  {
+    const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(VERSION);
+    const el = document.getElementById('version');
+    if (el) el.textContent = m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : 'bản chạy thử (không có mã phiên bản)';
+  }
   const J = window.Jieqi;
   const ChessClock = window.ChessClock;
   const Bots = window.JieqiBots;
@@ -262,7 +268,6 @@
     log.scrollTop = log.scrollHeight;
     $('seed').textContent = history[0].seed;
     const noHuman = !actingSide();
-    $('undo').disabled = (!humanMoved() && !endResult) || noHuman;
     $('offerDraw').disabled = !!result || !!pendingConfirm || botThinking || noHuman;
     $('resign').disabled = !!result || !!pendingConfirm || noHuman;
     const anyHidden = current().board.some((p) => p && p.hidden);
@@ -445,7 +450,7 @@
       const elapsed = performance.now() - t0;
       await sleep(Math.max(0, MIN_BOT_DELAY_MS - elapsed));
       while (clock.paused && my === thinkId) await sleep(200);
-      if (my !== thinkId) return;   // cancelled meanwhile (undo, new game, player change…)
+      if (my !== thinkId) return;   // cancelled meanwhile (new game, player change…)
       botThinking = false;
       if (current() !== s || gameResult() || !isBot(side)) { render(); return; }
       if (!move || !J.getLegalMovesFrom(s, move.from).some((x) => x.to === move.to)) {
@@ -484,37 +489,6 @@
     selected = -1;
     render();
     maybeBotMove();
-  }
-
-  /** Is there a human move to take back? (In vs-computer games the bot's own moves are taken back with it.) */
-  const humanMoved = () => history.slice(1).some((h) => !isBot(h.lastMove.side));
-
-  function undo() {
-    if (!endResult && (!humanMoved() || !actingSide())) return;
-    cancelBot();
-    // Just resigned / drew / timed out: "Undo" only cancels that result, it does not take back a move
-    if (endResult) {
-      endResult = null;
-      revealedState = null;
-      clock.restore(clockSnaps[clockSnaps.length - 1], history.length > 1 ? current().turn : null);
-      render();
-      maybeBotMove();
-      return;
-    }
-    if (!actingSide()) return;
-    if (history.length <= 1 || !actingSide()) return;
-    history.pop(); clockSnaps.pop();
-    // keep taking back bot moves until it is a human's turn
-    while (isBot(current().turn) && history.length > 1) { history.pop(); clockSnaps.pop(); }
-    botInfos.length = history.length;
-    endResult = null;
-    revealedState = null;
-    pendingConfirm = null;
-    // the clock only starts after the first move
-    clock.restore(clockSnaps[clockSnaps.length - 1], history.length > 1 ? current().turn : null);
-    selected = -1;
-    render();
-    maybeBotMove();   // e.g. back at the start with the bot playing Red
   }
 
   function togglePause() {
@@ -623,7 +597,6 @@
     maybeBotMove();
   }
   $('newGame').addEventListener('click', newGame);
-  $('undo').addEventListener('click', undo);
   $('pause').addEventListener('click', togglePause);
   $('resign').addEventListener('click', resign);
   $('offerDraw').addEventListener('click', offerDraw);
@@ -638,7 +611,6 @@
   $('playerR').addEventListener('change', onPlayersChange);
   $('playerB').addEventListener('change', onPlayersChange);
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'z') undo();
     if (e.key === ' ' && e.target === document.body) { e.preventDefault(); togglePause(); }
   });
 

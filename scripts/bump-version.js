@@ -4,9 +4,11 @@
 const fs = require('fs');
 const path = require('path');
 const file = path.join(__dirname, '..', 'index.html');
-const d = new Date();
-const pad = (n) => String(n).padStart(2, '0');
-const v = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+// Vietnam time whatever the machine's time zone – the UI shows it as "Cập nhật: dd/mm/yyyy hh:mm"
+const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).formatToParts(new Date()).map((p) => [p.type, p.value]));
+const v = `${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}`;
 const html = fs.readFileSync(file, 'utf8');
 const out = html.replace(/\.js\?v=[^"]*"/g, `.js?v=${v}"`);
 fs.writeFileSync(file, out);

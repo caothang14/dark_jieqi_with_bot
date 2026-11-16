@@ -7,6 +7,8 @@
     'lib/common.js',
     'lib/eval.js',
     'lib/opening.js',
+    'lib/fastpos.js',
+    'lib/fastsearch.js',
     'random.js',
     'greedy.js',
     'eval1.js',

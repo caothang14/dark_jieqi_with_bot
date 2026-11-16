@@ -78,7 +78,6 @@
 
       <div class="buttons">
         <button id="newGame">Ván mới</button>
-        <button id="undo">Đi lại</button>
         <button id="pause">Tạm dừng</button>
       </div>
       <div class="buttons">
@@ -106,16 +105,17 @@
       <h2>Biên bản</h2>
       <ol id="log" class="log"></ol>
       <p class="seed">Seed: <span id="seed"></span></p>
+      <p class="seed">Cập nhật: <span id="version"></span></p>
     </aside>
   </main>
 
   <!-- ?v=: version tag of the files, changed on every update (npm run bump) so browsers never mix cached old files with new ones -->
-  <script src="engine.js?v=20261116-1431"></script>
-  <script src="clock.js?v=20261116-1431"></script>
-  <script src="bots/registry.js?v=20261116-1431"></script>
-  <script src="bots/manifest.js?v=20261116-1431"></script>
-  <script src="bots/worker.js?v=20261116-1431"></script>
+  <script src="engine.js?v=20261116-1558"></script>
+  <script src="clock.js?v=20261116-1558"></script>
+  <script src="bots/registry.js?v=20261116-1558"></script>
+  <script src="bots/manifest.js?v=20261116-1558"></script>
+  <script src="bots/worker.js?v=20261116-1558"></script>
   <!-- ui.js loads the bots listed in bots/manifest.js itself (with the same ?v=) -->
-  <script src="ui.js?v=20261116-1431"></script>
+  <script src="ui.js?v=20261116-1558"></script>
 </body>
 </html>
