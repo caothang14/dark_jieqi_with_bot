@@ -41,6 +41,29 @@ test('takes an undefended piece', async () => {
   assert.strictEqual(name(r.move), 'a4→a7');
 });
 
+test('level-4 (step 15 CPU budget) stays within its node budget and does not start an iteration it cannot finish', async () => {
+  const s = J.createGame({ seed: 21 });
+  const eco = bots.get('level-4').params;
+  const c = { side: 'r', random: () => 0.5, now: () => performance.now(), timeBudgetMs: 4000 };
+  const r = await bots.resolve('level-4').chooseMove(J.cloneState(s), J, c);
+  assert.ok(r.info.nodes <= eco.maxNodes + 128, `nodes ${r.info.nodes}`);
+  // opening: depth 3 costs ~0.12M nodes, depth 4 ~1.9M > budget → stops after depth 3 instead of cutting depth 4
+  assert.strictEqual(r.info.depth, 3);
+  assert.ok(r.info.nodes < 200000, `nodes ${r.info.nodes}`);
+});
+
+test('level-4 plays an obvious move at once (easyMargin)', async () => {
+  // Red Rook can take a free Black Rook; nothing else comes close
+  const s = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [0, 5, 'r', 'R'], [0, 1, 'b', 'R'], [8, 0, 'b', 'P'], [8, 9, 'r', 'P']]);
+  const c = { side: 'r', random: () => 0.5, now: () => performance.now(), timeBudgetMs: 4000 };
+  const full = await bots.resolve('search').chooseMove(J.cloneState(s), J, c);
+  const eco = await bots.resolve('level-4').chooseMove(J.cloneState(s), J, c);
+  assert.strictEqual(name(eco.move), 'a4→a8');
+  assert.strictEqual(name(full.move), 'a4→a8');
+  assert.strictEqual(eco.info.depth, bots.get('level-4').params.easyMinDepth);
+  assert.ok(eco.info.nodes * 5 < full.info.nodes, `eco ${eco.info.nodes} vs full ${full.info.nodes}`);
+});
+
 test('fixed-depth search is reproducible', async () => {
   const s = J.createGame({ seed: 11 });
   const a = await think('search:depth=1', s);

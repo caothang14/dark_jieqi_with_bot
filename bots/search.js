@@ -67,6 +67,8 @@
  *   pawnOrder    reveal order of hidden Pawns: 'edge' (edge files first) or 'c37' (files 3/7 first)
  *   fast         true (default): search the tree on the fast mutable position (lib/fastpos.js, lib/fastsearch.js);
  *                false: on engine states (the reference implementation – same results, slower)
+ *   maxNodes, predictStop, easyMargin, easyMinDepth   eco (step 15) – spend less CPU per move: node budget, do not start
+ *                an iteration predicted not to finish, stop early on an obvious move. See stopAfterIteration()
  *   debug        true: no alpha narrowing at the root and info.root = [{ from, to, score, pen }] for every root move
  *   randomness   >0: weaker, more human play for the difficulty levels: every root move gets an exact score
  *                (no alpha narrowing at the root) and the move is picked at random among those at most
@@ -242,8 +244,9 @@ JieqiBots.module(function (root) {
       return moves.sort((a, b) => b._o - a._o);
     }
 
+    let nodeLimit = Infinity;
     function checkTime() {
-      if ((++nodes & 127) === 0 && ctx.now() > deadline) throw TIMEOUT;
+      if ((++nodes & 127) === 0 && (ctx.now() > deadline || nodes > nodeLimit)) throw TIMEOUT;
     }
 
     // ── Transposition table ────────────────────────────────────────────
@@ -763,9 +766,37 @@ JieqiBots.module(function (root) {
       return adj;
     }
 
+    /**
+     * Should iterative deepening stop after this iteration (time-based search only)? Default: when 45% of the time is
+     * used. Eco params (step 15, all off by default – less CPU per move, e.g. on phones):
+     *  - predictStop: predict the next iteration's cost (this one × the growth factor of the last two, clamped
+     *    [3, 20], 8 when unknown, × predictSafety) and do not start it if it would not finish within the time / node budget – instead of
+     *    starting an iteration that will be cut (its partial result rarely changes the move)
+     *  - maxNodes: node budget per move (also a hard cap, see checkTime) – the same work on every device
+     *  - easyMargin: from depth easyMinDepth on, stop when the best move is at least this much (Pawns) better than every
+     *    other root move (their scores are upper bounds after alpha narrowing, so the margin is guaranteed)
+     */
+    function stopAfterIteration(depth, iter, prevIter, iterScore, rootMoves, iterBest) {
+      const elapsed = ctx.now() - t0Think;
+      if (p.easyMargin > 0 && depth >= p.easyMinDepth && rootMoves.length > 1) {
+        let second = -INF;
+        for (const m of rootMoves) if (m !== iterBest && m._s > second) second = m._s;
+        if (iterScore - second >= p.easyMargin) return true;
+      }
+      if (p.predictStop || p.maxNodes > 0) {
+        let growth = prevIter && prevIter.nodes > 0 ? iter.nodes / prevIter.nodes : 8;
+        growth = Math.min(20, Math.max(3, growth)) * p.predictSafety;   // deeper iterations tend to grow faster
+        if (p.maxNodes > 0 && totalNodesThink() + iter.nodes * growth > p.maxNodes) return true;
+        if (p.predictStop) return elapsed + iter.ms * growth > timeBudget;
+      }
+      return elapsed > timeBudget * 0.45;                    // next iteration unlikely to finish
+    }
+    let t0Think = 0, timeBudget = 0, totalNodesThink = () => nodes;
+
     /** Iterative deepening. Returns { move, score, depth, nodes }. */
     function think(state, timeMs) {
       const t0 = ctx.now();
+      t0Think = t0; timeBudget = timeMs;
       deadline = p.depth > 0 ? Infinity : t0 + timeMs;
       const maxDepth = p.depth > 0 ? p.depth : p.maxDepth;
       let rootMoves = orderMoves(state, J.getLegalMoves(state));
@@ -790,11 +821,17 @@ JieqiBots.module(function (root) {
       const tree = p.fast && FS && FP && !FS.unsupportedParams(p) && !FP.unsupportedWeights(w)
         && J._zobrist && J.kingSquare(state.board, 'r') >= 0 && J.kingSquare(state.board, 'b') >= 0
         ? FS.createFastTree(J, ctx, w, state, TIMEOUT) : null;
+      // eco (step 15): hard node cap – the iteration in progress is cut like a timeout
+      if (p.depth <= 0 && p.maxNodes > 0) { nodeLimit = p.maxNodes; if (tree) tree.setNodeLimit(p.maxNodes); }
       if (tree) tree.setDeadline(deadline);
+      const usedNodes = () => (tree ? tree.nodes() : nodes);
+      totalNodesThink = usedNodes;
+      let prevIter = null;                                   // { nodes, ms } of the iteration before the last one
       const value = (m, a, b, depth, child, probe) => (tree ? tree.rootValue(m, a, b, depth) : moveValue(state, m, a, b, child, probe));
 
       for (let depth = 1; depth <= maxDepth; depth++) {
         let alpha = -INF, iterBest = null, iterScore = -INF, searched = 0;
+        const iterStartNodes = usedNodes(), iterStartMs = ctx.now();
         try {
           const child = (next, a, b) => search(next, depth - 1, a, b, 1, false);
           const probe = depth - 1 <= 0
@@ -825,7 +862,11 @@ JieqiBots.module(function (root) {
         // best move first for the next iteration
         rootMoves.sort((a, b) => (b === iterBest) - (a === iterBest) || b._s - a._s);
         if (Math.abs(iterScore) > MATE_ZONE) break;                 // mate found
-        if (p.depth <= 0 && ctx.now() - t0 > timeMs * 0.45) break;  // next iteration unlikely to finish
+        if (p.depth <= 0) {
+          const iter = { nodes: usedNodes() - iterStartNodes, ms: ctx.now() - iterStartMs };
+          if (stopAfterIteration(depth, iter, prevIter, iterScore, rootMoves, iterBest)) break;
+          prevIter = iter;
+        }
       }
       if (p.debug && lastScores) best.root = lastScores.map(([m, sc]) => ({ from: m.from, to: m.to, score: +sc.toFixed(2), pen: m._pen }));
       if (p.randomness && lastScores && Math.abs(best.score) < MATE_ZONE) best = pickRandomized(best, lastScores);
@@ -855,6 +896,7 @@ JieqiBots.module(function (root) {
       openingOrder: true, revealTopK: 4, revealTopKRoot: 8, randomness: 0, drawThreshold: -0.5,
       ttKeep: false, qRevealUnknown: false,
       fast: true,           // tree search on the fast mutable position (lib/fastsearch.js); false = engine states (reference)
+      maxNodes: 0, predictStop: false, predictSafety: 1.5, easyMargin: 0, easyMinDepth: 3,   // eco (step 15): off here, on in level-4 ("Đấu với máy")
       revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge', keepThreatened: true, keepThreatenedMinBig: 3,
       hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
       horseReach: 0,        // evaluation weight (off: lost in the arena at 0.3); replaced by the root horseBlockBonus
@@ -943,5 +985,7 @@ JieqiBots.module(function (root) {
     params: { 'H.endgame': 5.5, 'R.endgame': 11, 'P.crossed': 2.5, phaseTime: { opening: 0.8, middlegame: 1, endgame: 2 } },
   });
 
-  Bots.lib.search = { createSearcher, outcomes, hashState };
+  // Step 15 (user, 2026-11-17: an iPhone got hot after ~10 minutes): CPU budget per move, used by level-4
+  const ECO_PARAMS = { maxNodes: 1200000, predictStop: true, easyMargin: 3 };
+  Bots.lib.search = { createSearcher, outcomes, hashState, ECO_PARAMS };
 });

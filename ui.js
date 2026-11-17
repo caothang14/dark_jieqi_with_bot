@@ -524,7 +524,7 @@
   const settings = { mode: 'computer', humanSide: 'r' };
   try { Object.assign(settings, JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}); } catch (e) { /* no storage */ }
   const saveSettings = () => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ } };
-  // "Đấu với máy" always plays the strongest bot (no difficulty choice for now; other bots: "Tuỳ chỉnh" tab)
+  // "Đấu với máy" always plays level-4 (= search with a CPU budget per move, step 15; other bots: "Tuỳ chỉnh" tab)
   const COMPUTER_BOT = Bots.get('level-4') ? 'level-4' : 'search';
   if (!['computer', 'two', 'custom'].includes(settings.mode) || (settings.mode === 'computer' && !Bots.get(COMPUTER_BOT))) settings.mode = 'two';
   $('humanSide').value = settings.humanSide;

@@ -408,6 +408,22 @@ not implement (`horseReach`, `bottomCannon`, `development`, `qRevealUnknown`, `t
 to it automatically. **A change to the evaluation (`eval.js`) or to the tree search in `search.js` must be mirrored in
 `fastpos.js` / `fastsearch.js`** – `test/fastpos.test.js` fails otherwise.
 
+### CPU budget per move (step 15) – "Đấu với máy" (`level-4`)
+
+After ~10 minutes on an iPhone (Safari) the phone got hot: the bot used its whole budget (3–4 s of one full core) on
+every move. `level-4` (the bot of "Đấu với máy") is now `search` + three root rules that cut the work per move
+(`ECO_PARAMS` in `search.js`; all off in `search` itself, so arena references are unchanged):
+
+| Param | Effect |
+|---|---|
+| `predictStop` | Do not start an iteration predicted not to finish (cost of the last one × growth of the last two, clamped [3, 20], × `predictSafety` 1.5) – instead of starting one that the deadline cuts |
+| `maxNodes` 1 200 000 | Node budget per move (also a hard cap) – the same work on every device |
+| `easyMargin` 3 | From depth 3, stop when the best move is ≥ 3 Pawns better than every other root move |
+
+On 30 fixed positions from two games (cloud box, time × 1.8 to mimic a Mac's 4 s): **−77% nodes per move** (1.70M →
+0.40M), average depth 6.8 → 5.9, same move as the full bot in 26/30 positions. Not arena-tested yet (`level-4` vs
+`search`).
+
 ### Progress (measured in the arena, 0.3 seconds/move)
 
 | Milestone | Result |

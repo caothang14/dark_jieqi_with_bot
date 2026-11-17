@@ -47,8 +47,9 @@ JieqiBots.module(function (root) {
     const limit = (state.rules && state.rules.naturalLimit) || 120;
     const repetitionOff = !!(state.rules && state.rules.repetition === 'none');
 
+    let nodeLimit = Infinity;
     function checkTime() {
-      if ((++nodes & 127) === 0 && ctx.now() > deadline) throw TIMEOUT;
+      if ((++nodes & 127) === 0 && (ctx.now() > deadline || nodes > nodeLimit)) throw TIMEOUT;
     }
 
     // ── Move ordering (search.js orderScore / orderMoves) ──
@@ -358,6 +359,7 @@ JieqiBots.module(function (root) {
     return {
       rootValue,
       setDeadline: (d) => { deadline = d; },
+      setNodeLimit: (n) => { nodeLimit = n; },
       nodes: () => nodes,
     };
   }
