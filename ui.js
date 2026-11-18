@@ -131,6 +131,13 @@
   }
 
   // ---------- Rendering ----------
+  /** The side whose knowledge is shown: the only human while a game against the computer is on, else null (show all). */
+  function infoViewer() {
+    if (gameResult()) return null;
+    const humans = ['r', 'b'].filter((side) => !isBot(side));
+    return humans.length === 1 ? humans[0] : null;
+  }
+
   function render() {
     const s = displayState();
     const result = gameResult();
@@ -138,7 +145,8 @@
     const showHint = $('hint').checked;
     const checkSq = !result && J.isInCheck(s) ? J.kingSquare(s.board, s.turn) : -1;
     const wasHidden = (i) => revealedState && current().board[i] && current().board[i].hidden;
-    const evalInfo = $('showEval').checked && Bots.lib.eval ? Bots.lib.eval.explain(s, J, 'r') : null;
+    const evalViewer = infoViewer();
+    const evalInfo = $('showEval').checked && Bots.lib.eval ? Bots.lib.eval.explain(evalViewer ? J.viewFor(s, evalViewer) : s, J, 'r') : null;
     const evalValues = new Map(evalInfo ? evalInfo.pieces.map((x) => [x.square, x.value]) : []);
     renderEval(evalInfo);
     $('boardWrap').classList.toggle('flipped', flipped());
@@ -236,15 +244,41 @@
         + `${botThinking ? ` (${playerName(s.turn)} đang nghĩ…)` : ''}${clock.paused ? ' – đang tạm dừng' : ''}`;
     }
 
-    const capHtml = (list) => list.map((c) =>
-      `<span class="han ${c.side}" title="${J.NAMES_VI[c.type]}${c.wasHidden ? ' (đang úp)' : ''}">${J.CHARS[c.side][c.type]}</span>`).join('') || '–';
-    $('capR').innerHTML = capHtml(s.captured.r);
-    $('capB').innerHTML = capHtml(s.captured.b);
+    // Hidden information: playing against the computer, the human only knows what they captured themselves – a hidden
+    // piece the bot captured stays unknown ("quân úp"), and the human's own pool is only what they can deduce. Two
+    // humans share the screen, and after the game everything is shown.
+    const viewer = infoViewer();
+    const ORDER = ['R', 'C', 'H', 'A', 'E', 'P'];
+    const capText = (capturer) => {
+      const list = s.captured[capturer];
+      if (!list.length) return '–';
+      const parts = [];
+      const hideTypes = viewer && capturer !== viewer;
+      if (hideTypes) {
+        const n = list.filter((c) => c.wasHidden).length;
+        if (n) parts.push(`${n} quân úp`);
+      }
+      for (const t of ORDER) {
+        for (const hidden of [true, false]) {
+          if (hidden && hideTypes) continue;
+          const n = list.filter((c) => c.type === t && !!c.wasHidden === hidden).length;
+          if (n) parts.push(`${n > 1 ? `${n} ` : ''}${J.NAMES_VI[t]} ${hidden ? 'úp' : 'ngửa'}`);
+        }
+      }
+      return parts.join(', ');
+    };
+    $('capR').textContent = capText('r');
+    $('capB').textContent = capText('b');
 
-    const poolHtml = (side) => Object.entries(s.pools[side]).filter(([, n]) => n > 0)
-      .map(([t, n]) => `${J.NAMES_VI[t]}×${n}`).join(', ') || '–';
-    $('poolR').textContent = poolHtml('r');
-    $('poolB').textContent = poolHtml('b');
+    const poolText = (side) => {
+      const own = viewer === side;
+      const pool = own ? J.viewFor(s, side).pools[side] : s.pools[side];
+      const txt = Object.entries(pool).filter(([, n]) => n > 0).map(([t, n]) => `${J.NAMES_VI[t]}×${n}`).join(', ') || '–';
+      const lost = own ? s.captured[J.opp(side)].filter((c) => c.wasHidden).length : 0;
+      return lost ? `${txt} (trong đó ${lost} quân úp đã bị ăn, chưa rõ là quân gì)` : txt;
+    };
+    $('poolR').textContent = poolText('r');
+    $('poolB').textContent = poolText('b');
 
     const log = $('log');
     log.innerHTML = '';
@@ -254,7 +288,9 @@
       const li = document.createElement('li');
       li.className = m.side;
       const who = m.wasHidden ? `[úp ${J.NAMES_VI[m.role]}]→${J.NAMES_VI[m.revealed]}` : J.NAMES_VI[m.type];
-      const cap = m.captured ? ` ăn ${J.NAMES_VI[m.captured.type]}${m.captured.wasHidden ? ' (úp)' : ''}` : '';
+      const cap = !m.captured ? ''
+        : m.captured.wasHidden && viewer && m.side !== viewer ? ' ăn quân úp'      // what the bot took is unknown to the human
+          : ` ăn ${J.NAMES_VI[m.captured.type]}${m.captured.wasHidden ? ' (úp)' : ''}`;
       li.textContent = `${SIDE_VI[m.side]}: ${who} ${J.squareName(m.from)}→${J.squareName(m.to)}${cap}`;
       if (info) {
         const span = document.createElement('span');
@@ -334,7 +370,7 @@
     const bot = player(other);
     let accept = false;
     try {
-      accept = await bot.acceptDraw(J.cloneState(current()), J, botContext(other));
+      accept = await bot.acceptDraw(J.viewFor(current(), other), J, botContext(other));
     } catch (err) { console.error('Bot error:', err); }
     if (accept) endGame({ winner: null, reason: 'agreement' });
     else { toast(`${bot.name} từ chối hoà.`); render(); }
@@ -446,7 +482,8 @@
     thinkingSpec = bot.id;
     const t0 = performance.now();
     try {
-      const { move, info } = await bot.chooseMove(J.cloneState(s), J, botContext(side));
+      // the bot only gets what its side knows (J.viewFor): not the identity of its hidden pieces the human captured
+      const { move, info } = await bot.chooseMove(J.viewFor(s, side), J, botContext(side));
       const elapsed = performance.now() - t0;
       await sleep(Math.max(0, MIN_BOT_DELAY_MS - elapsed));
       while (clock.paused && my === thinkId) await sleep(200);

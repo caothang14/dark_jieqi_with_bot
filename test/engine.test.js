@@ -174,6 +174,39 @@ test('makeMove does not modify the input state or share the moving piece', () =>
   assert.notStrictEqual(n.board[n.lastMove.to], s.board[n.lastMove.from]);
 });
 
+test('viewFor: a side does not know its hidden pieces the opponent captured; keys and repetition still match', () => {
+  let s = J.createGame({ seed: 9 });
+  const rnd = require('../bots').seededRandom(3);
+  let hiddenCaptures = 0, checked = 0;
+  for (let i = 0; i < 200 && !s.result; i++) {
+    for (const side of ['r', 'b']) {
+      const v = J.viewFor(s, side), o = J.opp(side);
+      assert.strictEqual(J.positionKey(v), v.key);
+      if (v.rep) assert.strictEqual(v.rep.key, v.key);
+      const a = J.repetitionStatus(s), b = J.repetitionStatus(v);
+      assert.deepStrictEqual(a && a.result, b && b.result);
+      // own pool = start pool minus own revealed pieces (on the board or captured revealed)
+      const revealed = v.board.filter((p) => p && p.side === side && !p.hidden && p.type !== 'K').length
+        + v.captured[o].filter((c) => !c.wasHidden).length;
+      assert.strictEqual(Object.values(v.pools[side]).reduce((x, y) => x + y, 0), 15 - revealed);
+      assert.ok(v.captured[o].every((c) => !c.wasHidden || c.type === null), 'identities of own hidden losses removed');
+      assert.deepStrictEqual(v.pools[o], s.pools[o], 'the opponent pool is known exactly');
+      assert.strictEqual(v.rng, 0);
+      assert.deepStrictEqual(J.getLegalMoves(v), J.getLegalMoves(s));
+      checked++;
+    }
+    const ms = J.getLegalMoves(s), caps = ms.filter((m) => s.board[m.to]);
+    const m = caps.length && rnd() < 0.5 ? caps[0] : ms[Math.floor(rnd() * ms.length)];
+    if (s.board[m.to] && s.board[m.to].hidden) hiddenCaptures++;
+    s = J.makeMove(s, m);
+  }
+  assert.ok(hiddenCaptures >= 5 && checked > 100);
+  // the state itself is not modified
+  const before = JSON.stringify(s.pools);
+  J.viewFor(s, 'r');
+  assert.strictEqual(JSON.stringify(s.pools), before);
+});
+
 test('revealUnknown (search only): the moving hidden piece stays hidden, pool untouched', () => {
   const s = J.createGame({ seed: 1 });
   const n = J.makeMove(s, { from: J.idx(1, 7), to: J.idx(1, 0) }, { revealUnknown: true, captureUnknown: true, fast: true });

@@ -902,6 +902,53 @@
     return { count, cycle, violators, result };
   }
 
+  // ---------- What one side knows (hidden information) ----------
+  /**
+   * The state as seen by `side` (a NEW state – give this to a bot or show it to a player):
+   *  - pools[side]: side cannot know what its hidden pieces captured by the opponent were, so its own pool is the
+   *    start pool minus its pieces that were revealed (on the board, or captured while revealed). It may hold more
+   *    pieces than side still has hidden on the board – the reveal probabilities are exactly what a player would use.
+   *  - pools[opp]: unchanged – every hidden opponent piece that left the board was captured by side, who saw it.
+   *  - the identities of side's hidden pieces captured by the opponent are removed (captured[opp], lastMove).
+   *  - the RNG state and seed are removed (they would tell what the hidden pieces are).
+   *  - position keys (key, k1, k2, the repetition chain) are recomputed with these pools, so repetitions still match.
+   */
+  function viewFor(state, side) {
+    const o = opp(side);
+    const s = cloneState(state);
+    const pool = {};
+    for (const t of Object.keys(START_POOL)) pool[t] = START_POOL[t];
+    for (const p of s.board) if (p && p.side === side && !p.hidden && p.type !== 'K' && pool[p.type] != null) pool[p.type]--;
+    for (const c of s.captured[o]) if (!c.wasHidden && c.type && pool[c.type] != null) pool[c.type]--;
+    s.pools = { ...s.pools, [side]: pool };
+    s.captured = { ...s.captured, [o]: s.captured[o].map((c) => (c.wasHidden ? { ...c, type: null } : c)) };
+    if (s.lastMove && s.lastMove.captured && s.lastMove.side === o && s.lastMove.captured.wasHidden) {
+      s.lastMove = { ...s.lastMove, captured: { ...s.lastMove.captured, type: null } };
+    }
+    s.seed = 0; s.rng = 0;
+    // re-key the repetition chain: step back through it (no capture / reveal inside a chain, so pools are constant)
+    if (state.rep) {
+      const nodes = [];
+      for (let n = state.rep; n; n = n.prev) nodes.push(n);
+      const keys = [];
+      let board = s.board.slice(), turn = s.turn;
+      for (let i = 0; i < nodes.length; i++) {
+        keys.push(positionKey({ board, turn, pools: s.pools }));
+        const n = nodes[i];
+        if (n.from < 0) break;
+        const b2 = board.slice(); b2[n.from] = b2[n.to]; b2[n.to] = null;
+        board = b2; turn = opp(turn);
+      }
+      // rebuild the list oldest first (every node keeps its from / to / len)
+      let rep = null;
+      for (let i = keys.length - 1; i >= 0; i--) rep = { key: keys[i], from: nodes[i].from, to: nodes[i].to, prev: rep, len: nodes[i].len };
+      s.rep = rep;
+    }
+    [s.k1, s.k2] = positionKeyParts(s);
+    s.key = combineKey(s.k1, s.k2);
+    return s;
+  }
+
   // ---------- Notation / debugging ----------
   const FILES = 'abcdefghi';
   /** Square name from red's point of view: a0 = red's bottom-left corner. */
@@ -932,7 +979,7 @@
     W, H, TYPES, START_POOL, NAMES_VI, CHARS,
     idx, X, Y, opp,
     createGame, cloneState,
-    getLegalMoves, getLegalMovesFrom, countPseudoMoves, makeMove, revealAll,
+    getLegalMoves, getLegalMovesFrom, countPseudoMoves, makeMove, revealAll, viewFor,
     positionKey, repetitionStatus, classifyMove, forbiddenMoves, DEFAULT_RULES,
     isInCheck, kingSquare, revealProbabilities, isSquareAttacked, pseudoTargets, countTrappedHidden, attackMap, scanPosition,
     _debug: { isSquareAttackedSlow, kingsFacing, getGeometricMovesSlow, getGeometricMoves, countTrappedHiddenSlow },

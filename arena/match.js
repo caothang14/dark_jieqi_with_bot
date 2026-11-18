@@ -48,7 +48,8 @@
 
       let out;
       try {
-        out = await players[side].chooseMove(J.cloneState(state), J, ctx);
+        // each bot only gets what its side knows (not its hidden pieces captured by the other bot)
+        out = await players[side].chooseMove(J.viewFor(state, side), J, ctx);
       } catch (err) {
         result = { winner: J.opp(side), reason: 'bot-error', detail: `${players[side].id}: ${err && err.message}` };
         break;

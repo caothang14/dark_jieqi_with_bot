@@ -364,6 +364,14 @@ User's experience (2026-11-13): experts rarely move the King. In a game the bot 
 
 Root penalty on the King's **first** move off its start square (e0 / e9): forward `kingUpMalus=1`, sideways `kingSideMalus=0.3`. Opening + middlegame only, while the opponent still has a Rook or Cannon (revealed or hidden); also when the King captures; not when in check. Previous version kept as the hidden bot `search-v10`. Not arena-tested yet.
 
+### Hidden information
+
+Like a real Jieqi game, a side only knows the identity of the hidden pieces IT captured. `Jieqi.viewFor(state, side)`
+gives that side's view (own pool without the hidden pieces it lost, those identities removed, no RNG; keys re-computed
+so repetitions still match). The bots always get their view (UI and arena); against the computer the UI shows the
+human's view: "1 quân úp" for what the bot took, the human's pool with "N quân úp đã bị ăn, chưa rõ là quân gì".
+After the game (and with two human players) everything is shown.
+
 ### Step 16 – pháo trống, tượng nhòm tâm, giải vây, nước thừa (user's game report 2026-11-18)
 
 - **Pháo trống coming** (enemy revealed Cannon on our King file, ≤ 2 of our pieces between in our half, square in front
