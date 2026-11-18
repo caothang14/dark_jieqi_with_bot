@@ -364,6 +364,23 @@ User's experience (2026-11-13): experts rarely move the King. In a game the bot 
 
 Root penalty on the King's **first** move off its start square (e0 / e9): forward `kingUpMalus=1`, sideways `kingSideMalus=0.3`. Opening + middlegame only, while the opponent still has a Rook or Cannon (revealed or hidden); also when the King captures; not when in check. Previous version kept as the hidden bot `search-v10`. Not arena-tested yet.
 
+### Step 16 – pháo trống, tượng nhòm tâm, giải vây, nước thừa (user's game report 2026-11-18)
+
+- **Pháo trống coming** (enemy revealed Cannon on our King file, ≤ 2 of our pieces between in our half, square in front
+  of the King empty): root bonus 2.5 for putting an Advisor / Elephant on that file in front of the King – even onto a
+  square an enemy Elephant attacks, so that a later Cannon check can be blocked (pháo đầu instead of pháo trống).
+- **Tượng nhòm tâm** (enemy Elephant aiming at our palace centre through an empty eye), once the Pawn row is revealed:
+  bonus 0.6 for chasing it (new attack from a safe square; +0.2 for a hidden Horse) or blocking its eye; those moves
+  are kept by the root pruning.
+- Evaluation: pháo đầu with the King off its start square 0.5, Cannon with 2 pieces between 0.25, palace centre empty
+  and attacked while a Cannon is on the file 0.5.
+- No releasing of controlled hidden pieces: the Pawn-standoff rule on every file, and 0.6 per released piece when
+  behind / in the endgame.
+- Wasted moves: same revealed piece again 0.3 (third time 0.6); revealed Advisor / Elephant into the enemy half 0.5.
+- Search fix: no LMR for quiet moves attacking the enemy palace (a reduced Rook move to the 8th rank hid a mate).
+
+Reference `search-v11`. Arena vs search-v11, 60 games at 0.5 s/move: 51.7% (≈ +12 Elo, within noise).
+
 ### Faster search (step 10)
 
 Exact speed-ups – the bot plays exactly the same moves with the same node counts, only faster (checked against the old code on ~45,000 random positions, perft unchanged):

@@ -45,6 +45,8 @@ test('level-4 (step 15 CPU budget) stays within its node budget and does not sta
   const s = J.createGame({ seed: 21 });
   const eco = bots.get('level-4').params;
   const c = { side: 'r', random: () => 0.5, now: () => performance.now(), timeBudgetMs: 4000 };
+  // warm-up: a cold (not yet JIT-compiled) first search is slow, and predictStop is time-based
+  await bots.resolve('level-4').chooseMove(J.cloneState(s), J, c);
   const r = await bots.resolve('level-4').chooseMove(J.cloneState(s), J, c);
   assert.ok(r.info.nodes <= eco.maxNodes + 128, `nodes ${r.info.nodes}`);
   // opening: depth 3 costs ~0.12M nodes, depth 4 ~1.9M > budget → stops after depth 3 instead of cutting depth 4
@@ -369,6 +371,94 @@ test('step 13: the King prefers to stay home – recapture with the hidden Advis
   t.board[sq('d9')] = null;
   const r2 = await think('search:depth=1,debug=true,strengthGap=0', t);
   assert.strictEqual(r2.info.root.find((x) => name(x) === 'e9→d9').pen, 0.3);
+});
+
+// ── Step 16 (user's game report 2026-11-18) ──────────────────────────────────────────────────────────
+// Game 2 of the report (Red = user, Black = bot), replayed with the logged reveals
+const GAME_2018 = 'Đỏ: [úp Tốt]→Tượng i3→i4 Đen: [úp Tốt]→Tượng g6→g5 Đỏ: [úp Tốt]→Tốt e3→e4 Đen: [úp Tốt]→Mã a6→a5 Đỏ: [úp Tốt]→Tốt a3→a4 Đen: [úp Tốt]→Pháo c6→c5 Đỏ: [úp Tượng]→Pháo c0→e2 Đen: Tượng g5→e3 Đỏ: Tốt a4→a5 ăn Mã Đen: Pháo c5→i5 Đỏ: Tượng i4→g6 Đen: Pháo i5→g5 Đỏ: [úp Mã]→Xe h0→i2 Đen: [úp Tốt]→Tốt i6→i5 Đỏ: [úp Pháo]→Mã h2→h9 ăn Xe (úp) Đen: [úp Xe]→Tốt i9→h9 ăn Mã Đỏ: Xe i2→f2 Đen: Tốt i5→i4 Đỏ: [úp Tốt]→Sĩ g3→g4 Đen: [úp Tượng]→Mã c9→e7 Đỏ: Sĩ g4→h5 Đen: [úp Mã]→Sĩ b9→c7 Đỏ: [úp Tốt]→Tượng c3→c4 Đen: Tốt i4→h4 Đỏ: Tốt e4→e5 Đen: [úp Tốt]→Tốt e6→e5 ăn Tốt Đỏ: Pháo e2→e5 ăn Tốt Đen: Mã e7→c6 Đỏ: Pháo e5→e4 Đen: [úp Pháo]→Tượng b7→b4';
+function replayLog(text, upto) {
+  const T = { 'Tướng': 'K', 'Sĩ': 'A', 'Tượng': 'E', 'Mã': 'H', 'Xe': 'R', 'Pháo': 'C', 'Tốt': 'P' };
+  const sq = (x) => J.idx('abcdefghi'.indexOf(x[0]), 9 - +x[1]);
+  const re = /(Đỏ|Đen): (?:\[úp (\S+)\]→)?(\S+) ([a-i]\d)→([a-i]\d)(?: ăn (Tướng|Sĩ|Tượng|Mã|Xe|Pháo|Tốt)( \(úp\))?)?/g;
+  let s = J.createGame({ seed: 1 }), m, n = 0;
+  const history = [];
+  while ((m = re.exec(text)) && n < upto) {
+    const from = sq(m[4]), to = sq(m[5]), opts = { trusted: true };
+    if (s.board[from].hidden) opts.revealAs = T[m[3]];
+    if (s.board[to] && s.board[to].hidden) opts.captureAs = T[m[6]];
+    s = J.makeMove(s, { from, to }, opts);
+    history.push({ from, to });
+    n++;
+  }
+  return { s, history };
+}
+const rootOf = async (spec, s, history) => {
+  const r = await bots.resolve(`${spec},debug=true`).chooseMove(J.cloneState(s), J, { ...ctx(s.turn), history });
+  return { r, root: r.info.root, find: (n) => r.info.root.find((x) => name(x) === n) };
+};
+
+test('step 16 rule 1: with an enemy Cannon on the King file and the file thin, the bot puts an Advisor on e8 first', async () => {
+  // move 26 of the reported game: the bot (Black) played e6xe5, opening the file → Pháo e2xe5+, then pháo trống
+  const { s, history } = replayLog(GAME_2018, 25);
+  const old = await think('search-v11:depth=4', s);
+  assert.strictEqual(name(old.move), 'e6→e5', 'the old bot opens the file');
+  const r = await bots.resolve('search:depth=4').chooseMove(J.cloneState(s), J, { ...ctx(s.turn), history });
+  assert.ok(['f9→e8', 'd9→e8'].includes(name(r.move)), `played ${name(r.move)}`);
+});
+
+test('step 16 rule 2 + LMR fix: against an eyeing Elephant (g6 → e8 through f7) the eye is blocked', async () => {
+  // move 30: the bot played b7b4 (it missed Xe f2→f8 because LMR reduced that quiet move); h7→f7 blocks the eye
+  const { s, history } = replayLog(GAME_2018, 29);
+  const { find } = await rootOf('search:depth=2', s, history);
+  const f7 = find('h7→f7');
+  assert.ok(f7 && f7.pen <= -0.6, `h7→f7 is kept at the root with the bonus (${f7 && f7.pen})`);
+  const { find: findOld } = await rootOf('search-v11:depth=2', s, history);
+  assert.ok(!findOld('h7→f7'), 'the old bot pruned it at the root');
+  // with the LMR exemption the full-window score of b7b4 at depth 4 sees the mate threat
+  const r = await bots.resolve('search:depth=4').chooseMove(J.cloneState(s), J, { ...ctx(s.turn), history });
+  assert.notStrictEqual(name(r.move), 'b7→b4');
+});
+
+test('step 16: pushing a revealed Pawn into the mouth of a hidden Pawn is penalised on every file', async () => {
+  // Black revealed Pawn e5 (x4,y4), Red hidden Pawn still on e3 (x4,y6): e5→e4 frees it (game 1 of the report)
+  const s = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [4, 4, 'b', 'P'], [0, 0, 'b', 'R'], [8, 9, 'r', 'R']], 'b');
+  s.board[J.idx(4, 6)] = { side: 'r', type: null, hidden: true, role: 'P' };
+  s.pools = { r: { P: 1 }, b: {} };
+  const spec = 'search:depth=1,strengthGap=0,palaceGuardBonus=0,phase.middlegameAbove=0';
+  const { find } = await rootOf(spec, s, []);
+  assert.ok(find('e5→e4').pen >= 1, `pen ${find('e5→e4').pen}`);
+  const { find: f2 } = await rootOf(`${spec},releaseControlAllFiles=false`, s, []);
+  assert.ok(!(f2('e5→e4').pen >= 1), 'step 9 alone: edge files only');
+});
+
+test('step 16: the same revealed piece moving again (0.3, third time 0.6); A/E wandering into the enemy half (0.5)', async () => {
+  const s = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [0, 2, 'b', 'R'], [8, 9, 'r', 'R'], [2, 0, 'b', 'E'], [7, 9, 'r', 'P']], 'b');
+  const spec = 'search:depth=1,strengthGap=0,palaceGuardBonus=0,phase.middlegameAbove=0';
+  // Black's previous move ended on a7 (0,2); the one before ended on a9, from where a9→… : third move in a row
+  const h2 = [{ from: J.idx(0, 0), to: J.idx(0, 2) }, { from: J.idx(8, 9), to: J.idx(8, 8) }];
+  const h3 = [{ from: J.idx(1, 0), to: J.idx(0, 0) }, { from: J.idx(8, 8), to: J.idx(8, 9) }, ...h2];
+  assert.strictEqual((await rootOf(spec, s, h2)).find('a7→b7').pen, 0.3);
+  assert.strictEqual((await rootOf(spec, s, h3)).find('a7→b7').pen, 0.6);
+  assert.strictEqual((await rootOf(spec, s, [])).find('a7→b7').pen, 0);
+  // Elephant c9 → e7 stays home; a revealed Elephant crossing the river is penalised
+  const t = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [2, 4, 'b', 'E'], [8, 9, 'r', 'R'], [7, 9, 'r', 'P']], 'b');
+  const { find } = await rootOf(spec, t, []);
+  assert.strictEqual(find('c5→e3').pen, 0.5);
+  assert.strictEqual(find('c5→a7').pen, 0);
+});
+
+test('step 16 eval: pháo đầu away from home, pháo đầu xa (2 between), palace centre controlled', () => {
+  const E = bots.lib.eval;
+  const w = E.resolveWeights(bots.get('search').params), w0 = E.resolveWeights(bots.get('search-v11').params);
+  // Red Cannon e2 (4,7) on Black King's file e9 (4,0) with 2 pieces between (Black Pawns e6, e7)
+  const s = board([[4, 0, 'b', 'K'], [3, 9, 'r', 'K'], [4, 7, 'r', 'C'], [4, 3, 'b', 'P'], [4, 2, 'b', 'P']], 'r');
+  assert.strictEqual(E.cannonScreens(s, J, 'b', J.idx(4, 0)), 2);
+  const d = E.evaluate(s, J, 'r', w) - E.evaluate(s, J, 'r', w0);
+  assert.ok(Math.abs(d - 0.25) < 1e-9, `cannonFile2 ${d}`);
+  // the square in front of the Black King (e8) attacked by a Red Elephant on g6 (6,3): +0.5
+  s.board[J.idx(6, 3)] = { side: 'r', type: 'E', hidden: false, role: 'E' };
+  const d2 = E.evaluate(s, J, 'r', w) - E.evaluate(s, J, 'r', w0);
+  assert.ok(Math.abs(d2 - 0.75) < 1e-9, `+ palace centre controlled ${d2}`);
 });
 
 (async () => {

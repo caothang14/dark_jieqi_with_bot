@@ -264,6 +264,19 @@ JieqiBots.module(function (root) {
       const side = pos.b[sq] >> 4;
       return pos.attacked(sq, side ^ 1) && !pos.attacked(sq, side);
     };
+    /** search.js attacksPalace: from `to` (after the quiet move), does the mover attack a square of the enemy palace? */
+    const PAL_BUF = new Int16Array(64);
+    function attacksPalace(from, to) {
+      const b = pos.b, pc = b[from], enemy = pos.turn ^ 1;
+      b[to] = pc; b[from] = 0;
+      const n = pos.gen(to, PAL_BUF, 0);
+      b[from] = pc; b[to] = 0;
+      for (let k = 0; k < n; k++) {
+        const t = PAL_BUF[k], x = SX[t], y = SY[t];
+        if (x >= 3 && x <= 5 && (enemy === 0 ? y >= 7 : y <= 2)) return true;
+      }
+      return false;
+    }
     const ttStore = (key, depth, value, flag, move, ply) => {
       if (TT.size > p.ttSize) TT.clear();
       if (value > MATE_ZONE) value += ply; else if (value < -MATE_ZONE) value -= ply;
@@ -318,7 +331,7 @@ JieqiBots.module(function (root) {
               && !(keepThreatenedHere && isThreatened(from))) continue;
         }
         let v;
-        if (p.lmr && depth >= p.lmrMinDepth && i >= p.lmrAfter && quiet && !inCheck) {
+        if (p.lmr && depth >= p.lmrMinDepth && i >= p.lmrAfter && quiet && !inCheck && !(p.lmrPalaceExempt && attacksPalace(from, to))) {
           v = moveValue(m, alpha, alpha + NULL_WINDOW, depth - 2, ply, 0);
           if (v > alpha) v = moveValue(m, alpha, beta, depth - 1, ply, 0);
         } else if (p.pvs && i > 0 && beta - alpha > NULL_WINDOW) {

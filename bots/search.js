@@ -439,7 +439,7 @@ JieqiBots.module(function (root) {
         }
         let v;
         // LMR: late quiet move → search 1 ply shallower with a null window; re-search at full depth if it surprises
-        if (p.lmr && depth >= p.lmrMinDepth && i >= p.lmrAfter && quiet && !inCheck) {
+        if (p.lmr && depth >= p.lmrMinDepth && i >= p.lmrAfter && quiet && !inCheck && !(p.lmrPalaceExempt && attacksPalace(state, m))) {
           v = moveValue(state, m, alpha, alpha + NULL_WINDOW, childR, probeR);
           if (v > alpha) v = moveValue(state, m, alpha, beta, child, probe);
         } else if (p.pvs && i > 0 && beta - alpha > NULL_WINDOW) {
@@ -462,6 +462,20 @@ JieqiBots.module(function (root) {
       }
       if (p.tt) ttStore(key, depth, best, best >= beta ? LOWER : best <= alpha0 ? UPPER : EXACT, bestMove, ply);
       return best;
+    }
+
+    /**
+     * Step 16: does the moving piece (a hidden one by its role) attack a square of the opponent's palace from m.to?
+     * Such quiet moves (Rook to the 8th rank, Cannon / Horse aiming at the palace…) are not reduced by LMR – game report
+     * 2026-11-18: Xe f2→f8 (mate threat) was reduced and missed.
+     */
+    function attacksPalace(state, m) {
+      const enemy = J.opp(state.turn), b2 = boardAfter(state, m);
+      for (const t of J.pseudoTargets(b2, m.to)) {
+        const x = t % 9, y = (t / 9) | 0;
+        if (x >= 3 && x <= 5 && (enemy === 'r' ? y >= 7 : y <= 2)) return true;
+      }
+      return false;
     }
 
     /**
@@ -548,7 +562,8 @@ JieqiBots.module(function (root) {
       const pc = state.board[m.from];
       if (!pc || pc.hidden || pc.type !== 'P') return false;
       const x = J.X(m.from), y = J.Y(m.from);
-      if (x !== 0 && x !== 8 || J.X(m.to) !== x) return false;
+      // step 9: edge files only; step 16 (releaseControlAllFiles): any file (game report: e5→e4 into the hidden e3 Pawn)
+      if ((!p.releaseControlAllFiles && x !== 0 && x !== 8) || J.X(m.to) !== x) return false;
       const red = pc.side === 'r';
       if (y !== (red ? 5 : 4) || J.Y(m.to) !== (red ? 4 : 5)) return false;
       const opp = state.board[J.idx(x, red ? 3 : 6)];
@@ -793,6 +808,91 @@ JieqiBots.module(function (root) {
     }
     let t0Think = 0, timeBudget = 0, totalNodesThink = () => nodes;
 
+    // ── Step 16 (user, 2026-11-18 game reports): pháo trống, tượng nhòm tâm, releasing hidden pieces, wasted moves ──
+
+    /**
+     * Facts about the position needed by the step-16 root rules (null when all are off or we are in check):
+     *  cannon – an enemy revealed Cannon on our King's file, at most 2 of our pieces between them in our half, and the
+     *           square in front of our King empty → { files: squares of the file between (our half, empty) }
+     *  eyes   – enemy revealed Elephants in our half aiming at our palace centre through an empty eye, once our Pawn
+     *           row has no hidden piece left that can be revealed safely → [{ sq, eye }]
+     */
+    function step16Context(state, moves) {
+      if (J.isInCheck(state)) return null;
+      const side = state.turn, enemy = J.opp(side), b = state.board, phase = E.gamePhase(state, w);
+      const ctx16 = { cannon: null, eyes: [], phase, history: ctx.history || [] };
+      const k = J.kingSquare(b, side);
+      if (p.antiEmptyCannonBonus > 0 && k >= 0) {
+        const x = J.X(k), dir = side === 'r' ? -1 : 1, front = k + dir * 9, fy = J.Y(front);
+        const frontOk = (side === 'r' ? fy >= 7 : fy <= 2) && !b[front];
+        let ours = 0, files = [];
+        for (let y = J.Y(k) + dir; y >= 0 && y < 10; y += dir) {
+          const sq = J.idx(x, y), pc = b[sq];
+          const ownHalf = side === 'r' ? y >= 5 : y <= 4;
+          if (!pc) { if (ownHalf) files.push(sq); continue; }
+          if (pc.side === enemy && !pc.hidden && pc.type === 'C') { if (frontOk && ours <= 2) ctx16.cannon = { files: new Set(files) }; break; }
+          if (pc.side === side && ownHalf) ours++;
+        }
+      }
+      if (p.antiEyeBonus > 0) {
+        const pawnRow = side === 'r' ? 6 : 3;
+        const pending = moves.some((m) => b[m.from].hidden && J.Y(m.from) === pawnRow && !b[m.to] && safeLanding(state, m));
+        if (!pending) {
+          const pc = J.idx(4, side === 'r' ? 8 : 1);
+          for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+            const ex = 4 + 2 * dx, ey = J.Y(pc) + 2 * dy;
+            if (ex < 0 || ex > 8 || ey < 0 || ey > 9) continue;
+            const sq = J.idx(ex, ey), el = b[sq], eye = J.idx(4 + dx, J.Y(pc) + dy);
+            if (el && el.side === enemy && !el.hidden && el.type === 'E' && !b[eye]) ctx16.eyes.push({ sq, eye });
+          }
+        }
+      }
+      return ctx16;
+    }
+
+    /** Root bonus (< 0) / penalty (> 0) of the step-16 rules for our move m. */
+    function step16Adj(state, m, c) {
+      const b = state.board, mover = b[m.from], target = b[m.to], side = mover.side, enemy = J.opp(side);
+      const kind = mover.hidden ? mover.role : mover.type;
+      let adj = 0;
+      // Luật 1 – pháo trống coming: put an Advisor / Elephant on the King's file in front of it, even onto a square the
+      // enemy attacks (when the Cannon then checks, one more piece can block: pháo đầu instead of pháo trống)
+      if (c.cannon && !target && (kind === 'A' || kind === 'E') && c.cannon.files.has(m.to)) adj -= p.antiEmptyCannonBonus;
+      // Luật 2 – tượng nhòm tâm: chase the Elephant (new attack on it from a safe square) or block its eye (safely)
+      if (c.eyes.length && !target) {
+        let chase = false, block = false;
+        const b2 = boardAfter(state, m);
+        for (const e of c.eyes) {
+          if (m.to === e.eye) block = true;
+          else if (!J.isSquareAttacked(b, e.sq, side) && J.isSquareAttacked(b2, e.sq, side)) chase = true;
+        }
+        if ((chase || block) && safeLanding(state, m)) adj -= p.antiEyeBonus + (chase && mover.hidden && mover.role === 'H' ? p.antiEyeHorseExtra : 0);
+      }
+      if (c.phase === 'endgame' || target || kind === 'K') return adj;
+      if (mover.hidden || isThreatened(state, m.from) || givesCheck(state, m)) return adj;
+      // the same revealed piece moving again and again (our previous move ended on m.from)
+      const h = c.history;
+      if (p.repeatMoveMalus > 0 && h.length >= 2 && h[h.length - 2].to === m.from) {
+        const third = h.length >= 4 && h[h.length - 4].to === h[h.length - 2].from;
+        adj += third ? p.repeatMoveMalus3 : p.repeatMoveMalus;
+      }
+      // a revealed Advisor / Elephant wandering into the enemy half without capturing
+      if (p.aeAdventureMalus > 0 && (kind === 'A' || kind === 'E')) {
+        const y = J.Y(m.to);
+        if (side === 'r' ? y <= 4 : y >= 5) adj += p.aeAdventureMalus;
+      }
+      return adj;
+    }
+
+    /** Releasing enemy hidden pieces we keep from revealing safely (when the step-12 control rule is off: behind / endgame). */
+    function releaseAdj(state, m, trapped) {
+      const target = state.board[m.to];
+      if (target && !target.hidden && (target.type === 'R' || target.type === 'C' || target.type === 'H')) return 0;
+      if (isThreatened(state, m.from) || givesCheck(state, m)) return 0;
+      const d = controlDelta(state, m, trapped);
+      return d < 0 ? -d * p.releaseMalus : 0;
+    }
+
     /** Iterative deepening. Returns { move, score, depth, nodes }. */
     function think(state, timeMs) {
       const t0 = ctx.now();
@@ -800,18 +900,25 @@ JieqiBots.module(function (root) {
       deadline = p.depth > 0 ? Infinity : t0 + timeMs;
       const maxDepth = p.depth > 0 ? p.depth : p.maxDepth;
       let rootMoves = orderMoves(state, J.getLegalMoves(state));
+      // step 16 root rules (computed on all moves first: their moves must survive the root pruning)
+      const s16 = step16Context(state, rootMoves);
+      for (const m of rootMoves) m._s16 = s16 ? step16Adj(state, m, s16) : 0;
       // Root pruning: keep only the top revealTopKRoot (non-capturing) reveal moves by priority
       const mode = balanceMode(state);
       const keepAll = (p.keepThreatened && poolBig(state, state.turn) >= p.keepThreatenedMinBig && hasThreatenedHidden(J, state, state.turn))
         || (mode === 'behind' && p.behindNoRootPrune);
       if (p.revealTopKRoot > 0 && !J.isInCheck(state) && !keepAll) {
         let seen = 0;
-        const kept = rootMoves.filter((m) => state.board[m.to] || !state.board[m.from].hidden || ++seen <= p.revealTopKRoot);
+        const kept = rootMoves.filter((m) => state.board[m.to] || !state.board[m.from].hidden || m._s16 < 0 || ++seen <= p.revealTopKRoot);
         if (kept.length) rootMoves = kept;
       }
       const rootInCheck = J.isInCheck(state);
       const trapped0 = mode ? trappedHidden(state.board, J.opp(state.turn)) : null;
-      for (const m of rootMoves) m._pen = rootInCheck ? 0 : +(styleMalus(state, m) + balanceAdj(state, m, mode, trapped0)).toFixed(6);
+      const trappedAll = !rootInCheck && p.releaseMalus > 0 && (mode === 'behind' || mode === null) ? trappedHidden(state.board, J.opp(state.turn)) : null;
+      for (const m of rootMoves) {
+        m._pen = rootInCheck ? 0 : +(styleMalus(state, m) + balanceAdj(state, m, mode, trapped0) + m._s16
+          + (trappedAll ? releaseAdj(state, m, trappedAll) : 0)).toFixed(6);
+      }
       let best = { move: rootMoves[0], score: 0, depth: 0 };
       if (rootMoves.length === 1) return { ...best, nodes };
       let lastScores = null;                                 // [move, score] of the last completed iteration
@@ -911,6 +1018,11 @@ JieqiBots.module(function (root) {
       strengthGap: 3, pawnRowRevealBonus: 0.4, behindQuietMalus: 1, behindCaptureMalus: 0.5, behindNoRootPrune: false,   // no-prune: 0.5 s arena 0–6 (too slow)
       aheadRevealMalus: 0.3, controlBonus: 0.4, controlEqualFactor: 0.5, palaceGuardBonus: 1,
       kingUpMalus: 1, kingSideMalus: 0.3,   // step 13: the King's first move off its start square (user)
+      // step 16 (user, 2026-11-18): see step16Adj / releaseAdj / attacksPalace and the eval weights
+      antiEmptyCannonBonus: 2.5, antiEyeBonus: 0.6, antiEyeHorseExtra: 0.2,
+      cannonFacingKingAway: 0.5, cannonFile2: 0.25, palaceCenterControlled: 0.5,
+      releaseControlAllFiles: true, releaseMalus: 0.6, repeatMoveMalus: 0.3, repeatMoveMalus3: 0.6, aeAdventureMalus: 0.5,
+      lmrPalaceExempt: true,
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -932,7 +1044,11 @@ JieqiBots.module(function (root) {
 
   // ── Styles sharing the same algorithm ──
   // reference variants keep their old behaviour: step-12 rules off, developFirst back on (unless they override it)
-  const STEP13_OFF = { kingUpMalus: 0, kingSideMalus: 0 };
+  const STEP16_OFF = {
+    antiEmptyCannonBonus: 0, antiEyeBonus: 0, cannonFacingKingAway: 0, cannonFile2: 0, palaceCenterControlled: 0,
+    releaseControlAllFiles: false, releaseMalus: 0, repeatMoveMalus: 0, repeatMoveMalus3: 0, aeAdventureMalus: 0, lmrPalaceExempt: false,
+  };
+  const STEP13_OFF = { ...STEP16_OFF, kingUpMalus: 0, kingSideMalus: 0 };
   const STEP12_OFF = { ...STEP13_OFF, strengthGap: 0, palaceGuardBonus: 0, developFirstMalus: 1, developFirstQuietMalus: 0.3 };
   Bots.variant('search', {
     id: 'search-v4', name: 'Bot tìm kiếm (bước 4)', hidden: true,
@@ -968,6 +1084,11 @@ JieqiBots.module(function (root) {
     id: 'search-v10', name: 'Bot tìm kiếm (bước 12)', hidden: true,
     description: '[Tham chiếu] Bản trước khi phạt Tướng rời ô gốc – giữ lại để đo tiến bộ.',
     params: { ...STEP13_OFF },
+  });
+  Bots.variant('search', {
+    id: 'search-v11', name: 'Bot tìm kiếm (bước 15)', hidden: true,
+    description: '[Tham chiếu] Bản trước bước 16 (chống pháo trống, tượng nhòm tâm, giải vây, nước thừa) – giữ lại để đo tiến bộ.',
+    params: { ...STEP16_OFF },
   });
   Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',

@@ -104,7 +104,9 @@ JieqiBots.module(function (root) {
       H: PHASES.map((ph) => w.H[ph]), C: PHASES.map((ph) => w.C[ph]), R: PHASES.map((ph) => w.R[ph]),
       // value by kind per phase for E/H/C/R when it does not depend on the square (crossedAE off)
       simple: PHASES.map((ph) => (w.crossedAE ? null : [0, 0, 0, w.E, w.H[ph], w.R[ph], w.C[ph], 0])),
-      kingSafety: !!(w.horseCheckThreat || w.cannonFacingKing || w.cannonEmptyFile || w.centralCannon || w.bottomCannon),
+      kingSafety: !!(w.horseCheckThreat || w.cannonFacingKing || w.cannonEmptyFile || w.centralCannon || w.bottomCannon
+        || w.cannonFacingKingAway || w.cannonFile2 || w.palaceCenterControlled),
+      cannonFile: !!(w.cannonFacingKingAway || w.cannonFile2 || w.palaceCenterControlled),
     };
   }
   /** Evaluation terms the fast position does not implement (the search then uses the engine states). */
@@ -751,6 +753,14 @@ JieqiBots.module(function (root) {
         if (w.cannonFacingKing) s += w.cannonFacingKing * (this.cannonFacing(opp, kO) - this.cannonFacing(side, kS));
         if (w.cannonEmptyFile) s += w.cannonEmptyFile * (this.cannonEmpty(opp, kO) - this.cannonEmpty(side, kS));
         if (w.centralCannon) s += w.centralCannon * (this.centralCannons(side, phase) - this.centralCannons(opp, phase));
+        if (fw.cannonFile) {
+          // step 16 (eval.js cannonFileTerms) – same order of operations
+          this.cannonFileTerms(opp, kO, CF_O);
+          this.cannonFileTerms(side, kS, CF_S);
+          if (w.cannonFacingKingAway) s += w.cannonFacingKingAway * (CF_O[0] - CF_S[0]);
+          if (w.cannonFile2) s += w.cannonFile2 * (CF_O[1] - CF_S[1]);
+          if (w.palaceCenterControlled) s += w.palaceCenterControlled * (CF_O[2] - CF_S[2]);
+        }
         score += s;
       }
       return score;
@@ -801,6 +811,33 @@ JieqiBots.module(function (root) {
       }
       return -1;
     }
+    /** eval.js cannonScreens: pieces between side's King and the nearest enemy revealed Cannon on its file (0..2) or -1. */
+    cannonScreens(side, k) {
+      if (k < 0) return -1;
+      const b = this.b, x = SX[k], dir = side === 0 ? -1 : 1;
+      let between = 0;
+      for (let y = SY[k] + dir; y >= 0 && y < 10; y += dir) {
+        const c = b[y * 9 + x];
+        if (!c) continue;
+        if ((c >> 4) !== side && !(c & HID) && (c & 7) === C) return between;
+        between++;
+        if (between > 2) return -1;
+      }
+      return -1;
+    }
+    cannonFileTerms(side, k, out) {
+      out[0] = out[1] = out[2] = 0;
+      const n = this.cannonScreens(side, k);
+      if (n < 0) return out;
+      if (n === 1 && k !== (side === 0 ? 85 : 4)) out[0] = 1;
+      if (n === 2) out[1] = 1;
+      if (this.fw.w.palaceCenterControlled) {
+        const front = k + (side === 0 ? -9 : 9), fy = SY[front];
+        const inPalace = side === 0 ? fy >= 7 : fy <= 2;
+        if (inPalace && !this.b[front] && this.attacked(front, side ^ 1)) out[2] = 1;
+      }
+      return out;
+    }
     cannonFacing(side, k) {
       if (k !== (side === 0 ? 85 : 4)) return 0;
       return this.cannonOnKingFile(side, k) === 1 ? 1 : 0;
@@ -819,6 +856,7 @@ JieqiBots.module(function (root) {
     }
   }
   const HS = new Float64Array(4), HS_DONE = new Uint8Array(2);
+  const CF_S = new Int8Array(3), CF_O = new Int8Array(3);
   const HORSES_R = new Int16Array(16), HORSES_B = new Int16Array(16);
 
   const lib = (root.JieqiBots.lib = root.JieqiBots.lib || {});

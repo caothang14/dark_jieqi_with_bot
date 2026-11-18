@@ -43,6 +43,12 @@ JieqiBots.module(function (root) {
                             // >= 2 hidden pieces on its Advisor/Elephant squares (it stops them revealing to the centre)
     bottomCannon: 0,        // "pháo giác": our revealed Cannon on the opponent's back rank, per enemy hidden piece on an
                             // Advisor/Elephant square that it stops from being revealed safely
+    // step 16 (user, 2026-11-18, game report: pháo trống prepared long before it happened):
+    cannonFacingKingAway: 0,  // "pháo đầu" (1 piece between) while our King is NOT on its start square (cannonFacingKing
+                              // only counts the start square)
+    cannonFile2: 0,           // enemy revealed Cannon on our King's file with exactly 2 pieces between ("pháo đầu xa")
+    palaceCenterControlled: 0,// enemy revealed Cannon on our King's file (<= 2 pieces between) while the square in front
+                              // of our King is empty and attacked by the enemy (the usual A/E defence is blocked)
     mobility: 0.02,     // score per legal move more than the opponent
     check: 0.3,         // score when giving check
     win: 1000,          // win score (checkmate / opponent has no moves)
@@ -264,6 +270,36 @@ JieqiBots.module(function (root) {
     return k >= 0 && cannonOnKingFile(state, J, side, k) === 0 ? 1 : 0;
   }
 
+  /** Pieces between `side`'s King and the nearest enemy revealed Cannon on its file towards the opponent (0..2), or -1. */
+  function cannonScreens(state, J, side, k) {
+    if (k < 0) return -1;
+    const board = state.board, x = J.X(k), dir = side === 'r' ? -1 : 1;
+    let between = 0;
+    for (let y = J.Y(k) + dir; y >= 0 && y < 10; y += dir) {
+      const p = board[J.idx(x, y)];
+      if (!p) continue;
+      if (p.side !== side && !p.hidden && p.type === 'C') return between;
+      between++;
+      if (between > 2) return -1;
+    }
+    return -1;
+  }
+  /** Step 16 terms for `side`'s King: [pháo đầu away from home, pháo đầu xa (2 between), palace centre controlled]. */
+  function cannonFileTerms(state, J, side, k, w, out) {
+    out[0] = out[1] = out[2] = 0;
+    const n = cannonScreens(state, J, side, k);
+    if (n < 0) return out;
+    if (n === 1 && k !== J.idx(4, backRank(side))) out[0] = 1;
+    if (n === 2) out[1] = 1;
+    if (w.palaceCenterControlled) {
+      const front = k + (side === 'r' ? -9 : 9), fy = J.Y(front);
+      const inPalace = side === 'r' ? fy >= 7 : fy <= 2;
+      if (inPalace && !state.board[front] && J.isSquareAttacked(state.board, front, J.opp(side))) out[2] = 1;
+    }
+    return out;
+  }
+  const CF_S = [0, 0, 0], CF_O = [0, 0, 0];
+
   /** Pieces between `side`'s King and the nearest enemy revealed Cannon on its file towards the opponent (0/1), or -1. */
   function cannonOnKingFile(state, J, side, k) {
     const board = state.board, x = J.X(k), dir = side === 'r' ? -1 : 1;
@@ -323,6 +359,13 @@ JieqiBots.module(function (root) {
     if (w.cannonEmptyFile) s += w.cannonEmptyFile * (cannonsEmptyFile(state, J, opp, kO) - cannonsEmptyFile(state, J, side, kS));
     if (w.centralCannon) s += w.centralCannon * (centralCannons(state, J, side, phase) - centralCannons(state, J, opp, phase));
     if (w.bottomCannon) s += w.bottomCannon * (bottomCannonControl(state, J, side) - bottomCannonControl(state, J, opp));
+    if (w.cannonFacingKingAway || w.cannonFile2 || w.palaceCenterControlled) {
+      cannonFileTerms(state, J, opp, kO, w, CF_O);
+      cannonFileTerms(state, J, side, kS, w, CF_S);
+      if (w.cannonFacingKingAway) s += w.cannonFacingKingAway * (CF_O[0] - CF_S[0]);
+      if (w.cannonFile2) s += w.cannonFile2 * (CF_O[1] - CF_S[1]);
+      if (w.palaceCenterControlled) s += w.palaceCenterControlled * (CF_O[2] - CF_S[2]);
+    }
     return s;
   }
 
@@ -416,7 +459,8 @@ JieqiBots.module(function (root) {
       if (w.hiddenTrapped) score += controlScore(state, J, side, w);
     }
     if (w.horseReach) score += horseScore(state, J, side, w);
-    if (w.horseCheckThreat || w.cannonFacingKing || w.cannonEmptyFile || w.centralCannon || w.bottomCannon) {
+    if (w.horseCheckThreat || w.cannonFacingKing || w.cannonEmptyFile || w.centralCannon || w.bottomCannon
+        || w.cannonFacingKingAway || w.cannonFile2 || w.palaceCenterControlled) {
       score += kingSafetyScore(state, J, side, w, phase, pre);
     }
     return score;
@@ -426,6 +470,6 @@ JieqiBots.module(function (root) {
   lib.eval = {
     DEFAULT_WEIGHTS, resolveWeights, gamePhase, piecesOnBoard,
     typeValueAt, pieceValue, material, evaluate, explain, trappedHidden, horseReach,
-    horseCheckThreats, horseCheckThreatsSlow, cannonsFacingKing, cannonsEmptyFile, centralCannons, bottomCannonControl,
+    horseCheckThreats, horseCheckThreatsSlow, cannonsFacingKing, cannonsEmptyFile, centralCannons, bottomCannonControl, cannonScreens,
   };
 });
