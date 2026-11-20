@@ -342,10 +342,10 @@ test('step 12: behind in revealed strength → reveal instead of the lone Rook r
   assert.ok(s.board[r.move.from].hidden, `plays a reveal, not ${name(r.move)}`);
 });
 
-test('step 12: reveal the hidden Advisor a revealed Rook hits next to the King (palaceGuardBonus)', async () => {
-  // Black Rook d7 looks down the open d-file at the red hidden piece d0 next to the King e0
+test('step 12: reveal the hidden Advisor a revealed Rook hits next to the King (palaceGuardBonus – off since step 17)', async () => {
+  // Black Rook d7 looks down the open d-file at the red hidden piece d0 next to the King e0 (rule kept in search-v12)
   const s = fromStart([[3, 2, 'b', 'R']]);
-  const r = await think('search:depth=1,debug=true,revealTopKRoot=0', s);
+  const r = await think('search-v12:depth=1,debug=true,revealTopKRoot=0', s);
   const pen = (a, b) => r.info.root.find((x) => name(x) === `${a}→${b}`).pen;
   assert.strictEqual(pen('d0', 'e1'), -1, 'reveal the piece itself');
   assert.strictEqual(pen('b2', 'd2'), -1, 'or block the file with a reveal');
@@ -459,6 +459,49 @@ test('step 16 eval: pháo đầu away from home, pháo đầu xa (2 between), pa
   s.board[J.idx(6, 3)] = { side: 'r', type: 'E', hidden: false, role: 'E' };
   const d2 = E.evaluate(s, J, 'r', w) - E.evaluate(s, J, 'r', w0);
   assert.ok(Math.abs(d2 - 0.75) < 1e-9, `+ palace centre controlled ${d2}`);
+});
+
+// ── Step 17: keeping the hidden piece on an Advisor square (user, 2026-11-20) ──
+/** Starting position (all hidden) for Black to move, with the given changes [x, y, piece | null]. */
+function startWith(changes, turn = 'b') {
+  const s = J.createGame({ seed: 5 });
+  for (const [x, y, pc] of changes) s.board[J.idx(x, y)] = pc;
+  s.turn = turn;
+  s.pools.r = { A: 2, E: 2, H: 2, R: 0, C: 2, P: 5 };
+  return s;
+}
+const RED_R = { side: 'r', type: 'R', hidden: false, role: 'R' };
+
+test('step 17: doubled Rooks on the f-file → reveal the wing Horse / Elephant (hidden corner Rook guards f9), not f9 itself', async () => {
+  // Red Rook f5 (5,4) hits the hidden f9; a second Red Rook a4 (0,5) reaches f4 along its rank → can double
+  const s = startWith([[0, 9, null], [8, 9, null], [5, 4, RED_R], [0, 5, RED_R]]);
+  const spec = 'search:depth=1,strengthGap=0,revealTopKRoot=0';
+  const { find } = await rootOf(spec, s, []);
+  assert.ok(find('h9→g7').pen <= -0.4 + 1e-9, `h9→g7 ${find('h9→g7').pen}`);
+  assert.ok(find('g9→e7').pen <= -0.4 + 1e-9, `g9→e7 ${find('g9→e7').pen}`);
+  assert.ok(find('f9→e8').pen >= 0.5 - 1e-9, `f9→e8 ${find('f9→e8').pen}`);
+  // one Rook alone (the other cannot reach the file): no danger, nothing special
+  const t = startWith([[0, 9, null], [8, 9, null], [5, 4, RED_R], [0, 5, RED_R], [2, 5, { side: 'r', type: 'P', hidden: false, role: 'P' }]]);
+  const { find: f2 } = await rootOf(spec, t, []);
+  assert.ok(Math.abs(f2('f9→e8').pen) < 1e-9 && Math.abs(f2('h9→g7').pen) < 1e-9, `${f2('f9→e8').pen} ${f2('h9→g7').pen}`);
+});
+
+test('step 17: one Rook + the enemy King able to step onto the file (mặt Tướng) is a danger', async () => {
+  // Red King e0 with f0 empty (its Advisor gone) → can step to f0 and face f9: our King could not recapture
+  const s = startWith([[0, 9, null], [8, 9, null], [5, 9, null], [5, 4, RED_R]]);
+  const { find } = await rootOf('search:depth=1,strengthGap=0,revealTopKRoot=0', s, []);
+  assert.ok(find('f9→e8').pen >= 0.5 - 1e-9 && find('h9→g7').pen <= -0.4 + 1e-9, `${find('f9→e8').pen} ${find('h9→g7').pen}`);
+});
+
+test('step 17: game 2026-11-19 move 18 – one Rook on the f-file is no danger, f9→e8 gets no bonus any more', async () => {
+  const G = 'Đỏ: [úp Mã]→Xe b0→c2 Đen: [úp Tốt]→Xe e6→e5 Đỏ: Xe c2→e2 Đen: [úp Tốt]→Tốt i6→i5 Đỏ: [úp Tốt]→Xe c3→c4 Đen: [úp Tốt]→Mã c6→c5 Đỏ: [úp Tốt]→Tốt e3→e4 Đen: Xe e5→g5 Đỏ: Tốt e4→e5 Đen: [úp Tượng]→Tượng c9→e7 Đỏ: [úp Tốt]→Mã g3→g4 Đen: [úp Mã]→Pháo b9→c7 Đỏ: Xe c4→f4 Đen: [úp Mã]→Tượng h9→g7 Đỏ: Xe e2→d2 Đen: Xe g5→e5 ăn Tốt Đỏ: [úp Tượng]→Tốt c0→e2';
+  const { s, history } = replayLog(G, 17);
+  const { find } = await rootOf('search:depth=2,revealTopKRoot=0', J.viewFor(s, 'b'), history);
+  assert.ok(Math.abs(find('f9→e8').pen) < 1e-9, `pen ${find('f9→e8').pen}`);
+  const { find: old } = await rootOf('search-v12:depth=2,revealTopKRoot=0', J.viewFor(s, 'b'), history);
+  assert.strictEqual(old('f9→e8').pen, -1, 'the old rule 6 gave it +1');
+  const r = await bots.resolve('search:depth=4').chooseMove(J.viewFor(s, 'b'), J, { ...ctx('b'), history });
+  assert.notStrictEqual(name(r.move), 'f9→e8');
 });
 
 (async () => {

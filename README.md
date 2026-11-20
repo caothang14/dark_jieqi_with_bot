@@ -364,6 +364,15 @@ User's experience (2026-11-13): experts rarely move the King. In a game the bot 
 
 Root penalty on the King's **first** move off its start square (e0 / e9): forward `kingUpMalus=1`, sideways `kingSideMalus=0.3`. Opening + middlegame only, while the opponent still has a Rook or Cannon (revealed or hidden); also when the King captures; not when in check. Previous version kept as the hidden bot `search-v10`. Not arena-tested yet.
 
+### Step 17 – the hidden piece on an Advisor square
+
+Only a real threat counts: two enemy Rooks that can double on that file, or one Rook plus the enemy King on (or one
+step from) that file – then our King cannot recapture (flying general). A single Rook is ignored. Defence: reveal the
+hidden Horse / Elephant of that wing so the hidden corner Rook guards the square (0.8), bring a revealed defender
+(0.4), and do not reveal the Advisor-square piece itself (−0.5: it may not be an Advisor, and a Pawn on the palace
+centre boxes the King in). The step-12 "palaceGuardBonus" is off. The battery-saving `level-4` now always finishes
+depth 3 (same 1.2M-node cap). Reference `search-v12`.
+
 ### Hidden information
 
 Like a real Jieqi game, a side only knows the identity of the hidden pieces IT captured. `Jieqi.viewFor(state, side)`

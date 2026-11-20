@@ -792,6 +792,7 @@ JieqiBots.module(function (root) {
      *    other root move (their scores are upper bounds after alpha narrowing, so the margin is guaranteed)
      */
     function stopAfterIteration(depth, iter, prevIter, iterScore, rootMoves, iterBest) {
+      if (depth < p.minDepth) return false;                  // always finish this depth (the hard caps still apply)
       const elapsed = ctx.now() - t0Think;
       if (p.easyMargin > 0 && depth >= p.easyMinDepth && rootMoves.length > 1) {
         let second = -INF;
@@ -847,14 +848,98 @@ JieqiBots.module(function (root) {
           }
         }
       }
+      ctx16.advisor = p.advisorGuardBonus > 0 || p.advisorDefendBonus > 0 || p.advisorRevealMalus > 0 ? advisorDangers(state) : [];
       return ctx16;
+    }
+
+    // ── Step 17 (user, 2026-11-20): keeping the hidden piece on an Advisor square (replaces palaceGuardBonus) ──
+    /**
+     * Our hidden pieces on a back-rank Advisor square (d9/f9 for Black) that are really in danger:
+     *  (a) two enemy revealed Rooks can double on that file (one already hits the square, the other is on the file
+     *      behind it or reaches the file in one move), or
+     *  (b) one enemy Rook hits it (or reaches the file in one move with a clear line to it) and the enemy King stands on
+     *      that file or can step onto it ("xuất mặt Tướng"), with nothing else between – our King then cannot
+     *      recapture (flying general).
+     * One Rook alone, or two Rooks that cannot double, is not a danger. → [{ sq, x, wing: [squares], corner }]
+     */
+    function advisorDangers(state) {
+      const b = state.board, side = state.turn, enemy = J.opp(side), out = [];
+      const y0 = side === 'r' ? 9 : 0, dir = side === 'r' ? -1 : 1;
+      const rooks = [];
+      for (let i = 0; i < 90; i++) { const q = b[i]; if (q && q.side === enemy && !q.hidden && q.type === 'R') rooks.push(i); }
+      if (!rooks.length) return out;
+      const ek = J.kingSquare(b, enemy);
+      for (const x of [3, 5]) {
+        const sq = J.idx(x, y0), pc = b[sq];
+        if (!pc || !pc.hidden || pc.side !== side) continue;
+        // pieces on the file going away from the square: enemy Rooks met with only enemy Rooks before them
+        let onFile = 0;
+        for (let y = y0 + dir; y >= 0 && y < 10; y += dir) {
+          const q = b[J.idx(x, y)];
+          if (!q) continue;
+          if (q.side === enemy && !q.hidden && q.type === 'R') { onFile++; continue; }
+          break;
+        }
+        // Rooks that can step onto the file (along their rank) with a clear line from there to the square
+        const reach = rooks.filter((r) => {
+          const rx = J.X(r), ry = J.Y(r);
+          if (rx === x) return false;
+          for (let xx = rx + Math.sign(x - rx); xx !== x; xx += Math.sign(x - rx)) if (b[J.idx(xx, ry)]) return false;
+          if (b[J.idx(x, ry)]) return false;
+          for (let y = y0 + dir; y !== ry; y += dir) { const q = b[J.idx(x, y)]; if (q && !(q.side === enemy && !q.hidden && q.type === 'R')) return false; }
+          return true;
+        }).length;
+        const hits = onFile > 0 || reach > 0;
+        let danger = (onFile >= 2) || (onFile >= 1 && reach >= 1);
+        if (!danger && hits && ek >= 0) {
+          // enemy King on the file, or one step from it (its palace square there is empty): flying general
+          const ky = J.Y(ek), kx = J.X(ek);
+          const kingOn = kx === x || (Math.abs(kx - x) === 1 && !b[J.idx(x, ky)]);
+          if (kingOn) {
+            let others = 0;
+            for (let y = y0 + dir; y !== ky; y += dir) { const q = b[J.idx(x, y)]; if (q && !(q.side === enemy && !q.hidden && q.type === 'R')) others++; }
+            danger = others === 0;
+          }
+        }
+        if (danger) out.push({ sq, x, wing: x === 3 ? [J.idx(1, y0), J.idx(2, y0)] : [J.idx(7, y0), J.idx(6, y0)], corner: J.idx(x === 3 ? 0 : 8, y0) });
+      }
+      return out;
+    }
+
+    /** Is sq defended by a piece of `side` other than its King? */
+    function defendedWithoutKing(board, sq, side) {
+      const k = J.kingSquare(board, side), b2 = board.slice();
+      if (k >= 0) b2[k] = null;
+      return J.isSquareAttacked(b2, sq, side);
+    }
+
+    function advisorAdj(state, m, dangers) {
+      const b = state.board, mover = b[m.from], target = b[m.to], side = mover.side;
+      let adj = 0;
+      for (const d of dangers) {
+        // never volunteer the hidden piece itself (it may not be an Advisor – smothered-mate risk)
+        if (m.from === d.sq) { adj += p.advisorRevealMalus; continue; }
+        // reveal the hidden Horse / Elephant of that wing so that the hidden corner Rook guards the square
+        if (mover.hidden && !target && d.wing.includes(m.from) && (mover.role === 'H' || mover.role === 'E')) {
+          const corner = b[d.corner];
+          if (corner && corner.hidden && corner.side === side && corner.role === 'R') {
+            const b2 = boardAfter(state, m);
+            const clear = d.wing.every((w) => !b2[w]);
+            adj -= p.advisorGuardBonus * (clear ? 1 : 0.5);
+            continue;
+          }
+        }
+        // a revealed piece coming to defend the square
+        if (!mover.hidden && !defendedWithoutKing(b, d.sq, side) && defendedWithoutKing(boardAfter(state, m), d.sq, side)) adj -= p.advisorDefendBonus;
+      }
+      return adj;
     }
 
     /** Root bonus (< 0) / penalty (> 0) of the step-16 rules for our move m. */
     function step16Adj(state, m, c) {
       const b = state.board, mover = b[m.from], target = b[m.to], side = mover.side, enemy = J.opp(side);
       const kind = mover.hidden ? mover.role : mover.type;
-      let adj = 0;
+      let adj = c.advisor && c.advisor.length ? advisorAdj(state, m, c.advisor) : 0;
       // Luật 1 – pháo trống coming: put an Advisor / Elephant on the King's file in front of it, even onto a square the
       // enemy attacks (when the Cannon then checks, one more piece can block: pháo đầu instead of pháo trống)
       if (c.cannon && !target && (kind === 'A' || kind === 'E') && c.cannon.files.has(m.to)) adj -= p.antiEmptyCannonBonus;
@@ -1003,7 +1088,7 @@ JieqiBots.module(function (root) {
       openingOrder: true, revealTopK: 4, revealTopKRoot: 8, randomness: 0, drawThreshold: -0.5,
       ttKeep: false, qRevealUnknown: false,
       fast: true,           // tree search on the fast mutable position (lib/fastsearch.js); false = engine states (reference)
-      maxNodes: 0, predictStop: false, predictSafety: 1.5, easyMargin: 0, easyMinDepth: 3,   // eco (step 15): off here, on in level-4 ("Đấu với máy")
+      maxNodes: 0, predictStop: false, predictSafety: 1.5, easyMargin: 0, easyMinDepth: 3, minDepth: 0,   // eco (step 15): off here, on in level-4 ("Đấu với máy")
       revealSkipRoles: '', revealTopKDeveloped: 0, developedCount: 3, pawnOrder: 'edge', keepThreatened: true, keepThreatenedMinBig: 3,
       hiddenTrapped: 0.3,   // evaluation weight (bots/lib/eval.js): penalty per own hidden piece that cannot be revealed safely
       horseReach: 0,        // evaluation weight (off: lost in the arena at 0.3); replaced by the root horseBlockBonus
@@ -1016,13 +1101,16 @@ JieqiBots.module(function (root) {
       // step 12: revealed-strength balance (user's experience; replaces developFirst*, which is the narrow case
       // "we have nothing out, the opponent has a Rook")
       strengthGap: 3, pawnRowRevealBonus: 0.4, behindQuietMalus: 1, behindCaptureMalus: 0.5, behindNoRootPrune: false,   // no-prune: 0.5 s arena 0–6 (too slow)
-      aheadRevealMalus: 0.3, controlBonus: 0.4, controlEqualFactor: 0.5, palaceGuardBonus: 1,
+      aheadRevealMalus: 0.3, controlBonus: 0.4, controlEqualFactor: 0.5, palaceGuardBonus: 0,   // rule 6: off since step 17
       kingUpMalus: 1, kingSideMalus: 0.3,   // step 13: the King's first move off its start square (user)
       // step 16 (user, 2026-11-18): see step16Adj / releaseAdj / attacksPalace and the eval weights
-      antiEmptyCannonBonus: 2.5, antiEyeBonus: 0.6, antiEyeHorseExtra: 0.2,
+      antiEmptyCannonBonus: 3.5, antiEyeBonus: 0.6, antiEyeHorseExtra: 0.2,   // 3.5 since step 17 (was 2.5 + palaceGuardBonus 1)
       cannonFacingKingAway: 0.5, cannonFile2: 0.25, palaceCenterControlled: 0.5,
       releaseControlAllFiles: true, releaseMalus: 0.6, repeatMoveMalus: 0.3, repeatMoveMalus3: 0.6, aeAdventureMalus: 0.5,
       lmrPalaceExempt: true,
+      // step 17 (user, 2026-11-20): keep the hidden piece on an Advisor square only against a real threat (doubled
+      // Rooks / Rook + enemy King on the file); replaces palaceGuardBonus (rule 6 of step 12)
+      advisorGuardBonus: 0.8, advisorDefendBonus: 0.4, advisorRevealMalus: 0.5,
     },
     chooseMove(state, J, ctx) {
       const w = E.resolveWeights(ctx.params);
@@ -1044,7 +1132,9 @@ JieqiBots.module(function (root) {
 
   // ── Styles sharing the same algorithm ──
   // reference variants keep their old behaviour: step-12 rules off, developFirst back on (unless they override it)
+  const STEP17_OFF = { advisorGuardBonus: 0, advisorDefendBonus: 0, advisorRevealMalus: 0, palaceGuardBonus: 1, minDepth: 0, antiEmptyCannonBonus: 2.5 };
   const STEP16_OFF = {
+    ...STEP17_OFF,
     antiEmptyCannonBonus: 0, antiEyeBonus: 0, cannonFacingKingAway: 0, cannonFile2: 0, palaceCenterControlled: 0,
     releaseControlAllFiles: false, releaseMalus: 0, repeatMoveMalus: 0, repeatMoveMalus3: 0, aeAdventureMalus: 0, lmrPalaceExempt: false,
   };
@@ -1091,6 +1181,11 @@ JieqiBots.module(function (root) {
     params: { ...STEP16_OFF },
   });
   Bots.variant('search', {
+    id: 'search-v12', name: 'Bot tìm kiếm (bước 16)', hidden: true,
+    description: '[Tham chiếu] Bản trước bước 17 (giữ Sĩ úp chỉ khi có Xe chồng / mặt Tướng) – giữ lại để đo tiến bộ.',
+    params: { ...STEP17_OFF },
+  });
+  Bots.variant('search', {
     id: 'search-fast', name: 'Bot tìm kiếm (nhanh)',
     description: 'Như Bot tìm kiếm nhưng chỉ nghĩ tối đa 0,3 giây mỗi nước.',
     params: { maxTimeMs: 300, phaseTime: { opening: 1, middlegame: 1, endgame: 1 } },
@@ -1107,6 +1202,7 @@ JieqiBots.module(function (root) {
   });
 
   // Step 15 (user, 2026-11-17: an iPhone got hot after ~10 minutes): CPU budget per move, used by level-4
-  const ECO_PARAMS = { maxNodes: 1200000, predictStop: true, easyMargin: 3 };
+  // minDepth 3 (step 17): always finish depth 3 – the node prediction sometimes stopped at depth 2 (game 2026-11-19 #14)
+  const ECO_PARAMS = { maxNodes: 1200000, predictStop: true, easyMargin: 3, minDepth: 3 };
   Bots.lib.search = { createSearcher, outcomes, hashState, ECO_PARAMS };
 });
